@@ -4,5 +4,11 @@
     "title": "Flow Field",
     "path": "sketches/flow-field/index.html",
     "description": "Particle trails following a noise-based vector field."
+  },
+  {
+    "id": "kaleidoscope",
+    "title": "Kaleidoscope",
+    "path": "sketches/kaleidoscope/index.html",
+    "description": "Rotating symmetric bloom cycling through hues, mirrored across wedges."
   }
 ]
