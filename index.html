@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="manifest" href="app.webmanifest">
   <title>Art Kiosk</title>
   <style>
     html, body {
@@ -19,10 +24,40 @@
       height: 100vh;
       border: none;
     }
+    #start-overlay {
+      position: fixed;
+      inset: 0;
+      background: #0a0a0a;
+      color: #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 1.2rem;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      z-index: 10;
+    }
   </style>
 </head>
 <body>
   <iframe id="stage" title="sketch"></iframe>
+  <div id="start-overlay">Tap to start full screen</div>
+  <script>
+    // A page can only enter the Fullscreen API in response to a real user
+    // gesture, so the kiosk starts with a tap target that both requests
+    // fullscreen and dismisses itself. Later iframe src swaps don't navigate
+    // the top-level document, so fullscreen persists across rotation.
+    const overlay = document.getElementById('start-overlay');
+    overlay.addEventListener('click', () => {
+      const el = document.documentElement;
+      const request = el.requestFullscreen
+        || el.webkitRequestFullscreen
+        || el.msRequestFullscreen;
+      if (request) request.call(el).catch(() => {});
+      overlay.remove();
+    }, { once: true });
+  </script>
   <script>
     // How long each sketch stays on screen before rotating, in milliseconds.
     const ROTATE_MS = 3 * 60 * 1000;

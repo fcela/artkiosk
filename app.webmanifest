@@ -1,0 +1,9 @@
+{
+  "name": "Art Kiosk",
+  "short_name": "Art Kiosk",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a"
+}
