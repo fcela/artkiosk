@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flow Field</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #0a0a0a;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <script>
+    let particles = [];
+    // Lower numParticles if performance on the Meta Portal is sluggish
+    const numParticles = 2500; 
+    const noiseScale = 0.003;
+
+    function setup() {
+      // Changed from 600x600 to fill the browser window
+      createCanvas(windowWidth, windowHeight); 
+      background(10);
+      
+      for (let i = 0; i < numParticles; i++) {
+        particles.push({
+          x: random(width),
+          y: random(height),
+          c: color(random(100, 255), random(50, 150), random(150, 255), 15)
+        });
+      }
+    }
+
+    function draw() {
+      for (let i = 0; i < particles.length; i++) {
+        let p = particles[i];
+        
+        let angle = noise(p.x * noiseScale, p.y * noiseScale, frameCount * 0.002) * TWO_PI * 4;
+        
+        p.x += cos(angle);
+        p.y += sin(angle);
+        
+        stroke(p.c);
+        point(p.x, p.y);
+        
+        if (p.x < 0) p.x = width;
+        if (p.x > width) p.x = 0;
+        if (p.y < 0) p.y = height;
+        if (p.y > height) p.y = 0;
+      }
+    }
+
+    // Redraws the canvas if the browser window changes orientation or size
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      background(10);
+    }
+  </script>
+</body>
+</html>
+

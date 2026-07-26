@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Art Kiosk</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #0a0a0a;
+      overflow: hidden;
+    }
+    iframe {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <iframe id="stage" title="sketch"></iframe>
+  <script>
+    // How long each sketch stays on screen before rotating, in milliseconds.
+    const ROTATE_MS = 3 * 60 * 1000;
+
+    const stage = document.getElementById('stage');
+    let sketches = [];
+    let current = 0;
+
+    function showCurrent() {
+      if (sketches.length === 0) return;
+      // Cache-bust so a long-running kiosk tab picks up edits to the sketch file.
+      stage.src = sketches[current].path + '?t=' + Date.now();
+    }
+
+    function advance() {
+      current = (current + 1) % sketches.length;
+      showCurrent();
+    }
+
+    fetch('sketches/manifest.json')
+      .then(res => res.json())
+      .then(list => {
+        sketches = list;
+        // Start on a random sketch so a fleet of devices doesn't stay in lockstep.
+        current = Math.floor(Math.random() * sketches.length);
+        showCurrent();
+        setInterval(advance, ROTATE_MS);
+      });
+  </script>
+</body>
+</html>
