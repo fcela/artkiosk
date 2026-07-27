@@ -25,12 +25,15 @@ jobs:
 
       - name: Commit if the data moved
         run: |
-          if git diff --quiet -- sketches/correlation/data.json; then
-            echo "no change"
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add sketches/correlation/data.json
+          # Compare against the index, not the working tree: a file that has
+          # never been committed is untracked, and `git diff` says nothing has
+          # changed about a file it is not tracking.
+          if git diff --cached --quiet -- sketches/correlation/data.json; then
+            echo "no change"
+            exit 0
+          fi
           git commit -m "Refresh market data for the correlation sketch"
           git push
