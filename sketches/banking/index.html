@@ -87,9 +87,8 @@
       }
     }
 
-    // --- Veilband: translucent quads between rings, SCREEN blend ---
+    // --- Veilband: translucent quads between rings ---
     // Opacity keyed to local divergence — divergent eras glow brighter.
-    blendMode(SCREEN);
     noStroke();
     for (let s = 0; s < SEGS; s++) {
       let s2 = (s + 1) % SEGS;
