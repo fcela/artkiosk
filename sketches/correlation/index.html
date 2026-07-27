@@ -12,20 +12,21 @@
 </head>
 <body>
   <script>
-    // Twenty exchange-traded funds, positioned only by how their daily returns
-    // move together. The distance drawn between any two is sqrt(2(1-r)) for
-    // their correlation r over the trailing sixty trading days: identical
-    // behaviour puts them on top of one another, unrelated behaviour holds them
-    // apart. Nothing else places them - there are no axes and no prices here.
+    // Eighteen exchange-traded funds, positioned only by how their weekly
+    // returns move together. The distance drawn between any two is sqrt(2(1-r))
+    // for their correlation r over the trailing half year: identical behaviour
+    // puts them on top of one another, unrelated behaviour holds them apart.
+    // Nothing else places them - there are no axes and no prices here.
     //
-    // Played back, the market's own structure does the animation. In quiet
-    // periods the sectors separate into recognisable neighbourhoods; in a panic
-    // every correlation runs toward one and the whole constellation collapses
-    // into a single knot, then breaks apart again as things calm.
+    // Played back from 2007, the market's own structure does the animation. In
+    // quiet periods the sectors separate into recognisable neighbourhoods; in a
+    // panic every correlation runs toward one and the whole constellation
+    // collapses into a single knot, then breaks apart again as things calm.
 
-    const WINDOW = 60;          // trading days in the correlation window
+    const WINDOW = 26;          // weeks in the correlation window: half a year
+    const PERIODS_PER_YEAR = 52;
     const REPLAY_SECONDS = 165; // one pass through the history
-    const HOLD_SECONDS = 4;     // pause on the last day before looping
+    const HOLD_SECONDS = 4;     // pause on the last week before looping
 
     let data = null;
     let nodes = [];
@@ -33,7 +34,7 @@
     let vols = [];              // current annualised volatility, per asset
     let z = [];                 // standardised returns for the window
     let meanCorr = 0;
-    let dayIndex = 0;
+    let weekIndex = 0;
     let started = 0;
     let scaleR = 300;
     let failed = false;
@@ -115,8 +116,8 @@
         const sd = Math.sqrt(ss / len) || 1;
         for (let k = 0; k < len; k++) z[i][k] /= sd;
         // Returns are stored in basis points, so a standard deviation of 100 is
-        // one percent a day; annualise it the usual way.
-        vols[i] = (sd / 10000) * Math.sqrt(252);
+        // one percent a week; annualise it the usual way.
+        vols[i] = (sd / 10000) * Math.sqrt(PERIODS_PER_YEAR);
       }
 
       let sum = 0, pairs = 0;
@@ -174,8 +175,8 @@
       const elapsed = (millis() - started) / 1000;
       const span = REPLAY_SECONDS + HOLD_SECONDS;
       const phase = (elapsed % span) / REPLAY_SECONDS;
-      dayIndex = Math.min(total - 1, Math.floor(phase * total));
-      computeWindow(dayIndex);
+      weekIndex = Math.min(total - 1, Math.floor(phase * total));
+      computeWindow(weekIndex);
 
       for (let i = 0; i < n; i++) {
         nodes[i].r = 5 + 22 * constrain((vols[i] - 0.08) / 0.45, 0, 1);
@@ -242,12 +243,12 @@
       text('CORRELATION CONSTELLATION', m, m);
       fill(150, 150, 158, 175);
       textSize(11.5);
-      text('Twenty US exchange-traded funds, placed by the correlation of their daily returns\n' +
-           'over the previous ' + WINDOW + ' trading days. Disc size is trailing volatility.',
+      text('Eighteen US exchange-traded funds, placed by the correlation of their weekly returns\n' +
+           'over the previous ' + WINDOW + ' weeks. Disc size is trailing volatility.',
            m, m + 22);
 
       // The date, set large, because the whole piece is a clock.
-      const d = data.dates[dayIndex] || '';
+      const d = data.dates[weekIndex] || '';
       fill(236, 234, 226, 225);
       textAlign(LEFT, BOTTOM);
       textSize(34);
@@ -282,7 +283,7 @@
       fill(60, 60, 70, 160);
       rect(m, height - m - 3, tW, 1.5);
       fill(232, 230, 222, 200);
-      rect(m + tW * (dayIndex / max(1, total - 1)) - 1, height - m - 6, 2, 7);
+      rect(m + tW * (weekIndex / max(1, total - 1)) - 1, height - m - 6, 2, 7);
 
       // Legend, one line, right aligned under the caption.
       const keys = Object.keys(GROUPS);
