@@ -83,8 +83,12 @@
       let steps = 1500;
       for (let i = 0; i < steps; i++) {
         let angle = map(i, 0, steps, 0, TWO_PI);
-        // Map angle to a continuous data index
-        let exactIndex = map(sin(angle + offset), -1, 1, 0, dataArr.length - 1);
+        // Map the angle linearly so the dataset wraps around the circle once without mirroring.
+        // We use offset to spin the data around the circle.
+        let shiftedAngle = (angle + offset) % TWO_PI;
+        if (shiftedAngle < 0) shiftedAngle += TWO_PI;
+        
+        let exactIndex = map(shiftedAngle, 0, TWO_PI, 0, dataArr.length - 1);
         exactIndex = constrain(exactIndex, 0, dataArr.length - 1);
         
         // Linearly interpolate between the two nearest data points for perfectly smooth motion
