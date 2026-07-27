@@ -73,11 +73,14 @@
           const card = document.createElement('a');
           card.className = 'card';
           card.href = sketch.path;
+          // Disabled sketches still show here so they can be previewed and
+          // judged; only the kiosk rotation skips them.
+          const off = sketch.enabled === false ? ' &middot; hidden from kiosk' : '';
           card.innerHTML = `
             <iframe src="${sketch.path}"></iframe>
             <div class="label">
               <h2>${sketch.title}</h2>
-              <p>${sketch.description || ''}</p>
+              <p>${sketch.description || ''}${off}</p>
             </div>
           `;
           grid.appendChild(card);

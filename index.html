@@ -125,8 +125,13 @@
       showCurrent();
     }
 
+    // An entry with "enabled": false stays in the manifest and stays visible in
+    // the gallery, but drops out of the kiosk rotation. Anything without the
+    // key counts as enabled.
     function fetchManifest() {
-      return fetch('sketches/manifest.json?t=' + Date.now()).then(res => res.json());
+      return fetch('sketches/manifest.json?t=' + Date.now())
+        .then(res => res.json())
+        .then(list => list.filter(s => s.enabled !== false));
     }
 
     function refreshManifest() {
