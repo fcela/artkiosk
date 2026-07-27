@@ -27,37 +27,107 @@
     #start-overlay {
       position: fixed;
       inset: 0;
-      background: #0a0a0a;
-      color: #ccc;
+      background: #000;
+      color: #fff;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 1.2rem;
-      letter-spacing: 0.02em;
-      cursor: pointer;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       z-index: 10;
+    }
+    .minimal-container {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      max-width: 600px;
+      padding: 3rem;
+    }
+    .subtitle {
+      font-size: 0.8rem;
+      letter-spacing: 0.3em;
+      color: #666;
+      margin-bottom: 3rem;
+      text-transform: uppercase;
+    }
+    #sketch-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      margin-bottom: 4rem;
+    }
+    .sketch-option {
+      position: relative;
+    }
+    .sketch-checkbox {
+      display: none;
+    }
+    .sketch-label {
+      font-size: 3rem;
+      font-weight: 200;
+      letter-spacing: -0.02em;
+      color: #333;
+      cursor: pointer;
+      transition: color 0.4s ease, transform 0.4s ease;
+      display: block;
+      user-select: none;
+    }
+    .sketch-checkbox:checked + .sketch-label {
+      color: #fff;
+    }
+    .sketch-label:hover {
+      color: #777;
+    }
+    .sketch-checkbox:checked + .sketch-label:hover {
+      color: #fff;
+      transform: translateX(15px);
+    }
+    #start-btn {
+      background: transparent;
+      color: #fff;
+      border: 1px solid #333;
+      padding: 1.2rem 3rem;
+      font-size: 0.85rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.4s ease;
+      align-self: flex-start;
+      border-radius: 100px;
+    }
+    #start-btn:hover:not(:disabled) {
+      background: #fff;
+      color: #000;
+      border-color: #fff;
+    }
+    #start-btn:disabled {
+      color: #222;
+      border-color: #111;
+      cursor: not-allowed;
     }
   </style>
 </head>
 <body>
   <iframe id="stage" title="sketch"></iframe>
-  <div id="start-overlay">Tap to start full screen</div>
+  <div id="start-overlay">
+    <div class="minimal-container">
+      <div class="subtitle">Select Art for Rotation</div>
+      <div id="sketch-list"></div>
+      <button id="start-btn" disabled>Launch Kiosk</button>
+    </div>
+  </div>
   <script>
     // A page can only enter the Fullscreen API in response to a real user
-    // gesture, so the kiosk starts with a tap target that both requests
-    // fullscreen and dismisses itself. Later iframe src swaps don't navigate
-    // the top-level document, so fullscreen persists across rotation.
-    const overlay = document.getElementById('start-overlay');
-    overlay.addEventListener('click', () => {
+    // gesture. We'll call this when the user clicks the "Start Kiosk" button.
+    function enterFullscreenAndStart() {
+      startKiosk();
       const el = document.documentElement;
       const request = el.requestFullscreen
         || el.webkitRequestFullscreen
         || el.msRequestFullscreen;
       if (request) request.call(el).catch(() => {});
-      overlay.remove();
+      document.getElementById('start-overlay').remove();
       requestWakeLock();
-    }, { once: true });
+    }
   </script>
   <script>
     // A canvas animation alone doesn't stop a device from locking its
@@ -112,6 +182,7 @@
 
     const stage = document.getElementById('stage');
     let sketches = [];
+    let selectedIds = new Set();
     let current = 0;
 
     function showCurrent() {
@@ -121,6 +192,7 @@
     }
 
     function advance() {
+      if (sketches.length === 0) return;
       current = (current + 1) % sketches.length;
       showCurrent();
     }
@@ -136,9 +208,12 @@
 
     function refreshManifest() {
       fetchManifest().then(list => {
-        if (list.length === 0) return;
+        // Filter the newly fetched list by the user's initial selections
+        const filteredList = list.filter(s => selectedIds.has(s.id));
+        if (filteredList.length === 0) return;
+        
         const currentId = sketches[current] && sketches[current].id;
-        sketches = list;
+        sketches = filteredList;
         // Keep showing the same sketch if it still exists, rather than
         // jumping to a different one just because the list changed.
         const idx = sketches.findIndex(s => s.id === currentId);
@@ -146,13 +221,62 @@
       }).catch(() => {});
     }
 
-    fetchManifest().then(list => {
-      sketches = list;
+    function startKiosk() {
+      // Get selected IDs from checkboxes
+      const checkboxes = document.querySelectorAll('.sketch-checkbox:checked');
+      checkboxes.forEach(cb => selectedIds.add(cb.value));
+      
+      // Filter the initial sketches list by selections
+      sketches = sketches.filter(s => selectedIds.has(s.id));
+      
+      if (sketches.length === 0) return;
+      
       // Start on a random sketch so a fleet of devices doesn't stay in lockstep.
       current = Math.floor(Math.random() * sketches.length);
       showCurrent();
       setInterval(advance, ROTATE_MS);
       setInterval(refreshManifest, REFRESH_MANIFEST_MS);
+    }
+
+    function updateStartButtonState() {
+      const anyChecked = document.querySelectorAll('.sketch-checkbox:checked').length > 0;
+      document.getElementById('start-btn').disabled = !anyChecked;
+    }
+
+    // Initialize the setup panel
+    fetchManifest().then(list => {
+      sketches = list; // Keep full list temporarily for rendering options
+      
+      const listContainer = document.getElementById('sketch-list');
+      const startBtn = document.getElementById('start-btn');
+      
+      list.forEach(sketch => {
+        const option = document.createElement('div');
+        option.className = 'sketch-option';
+        
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.id = 'sketch-' + sketch.id;
+        cb.value = sketch.id;
+        cb.className = 'sketch-checkbox';
+        cb.checked = true; // Default all to checked
+        cb.addEventListener('change', updateStartButtonState);
+        
+        const label = document.createElement('label');
+        label.htmlFor = cb.id;
+        label.className = 'sketch-label';
+        label.textContent = sketch.title;
+        
+        option.appendChild(cb);
+        option.appendChild(label);
+        listContainer.appendChild(option);
+      });
+      
+      updateStartButtonState();
+      
+      startBtn.addEventListener('click', () => {
+        enterFullscreenAndStart();
+      });
     });
   </script>
 </body>

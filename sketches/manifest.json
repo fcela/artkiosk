@@ -19,6 +19,12 @@
     "description": "Op-art gratings read through a warped plane; the large shapes are the beat frequency between two ring sets."
   },
   {
+    "id": "banking",
+    "title": "Economic Tides",
+    "path": "sketches/banking/index.html",
+    "description": "An abstract visualization driven by FRED data (interest rates, unemployment, and inflation)."
+  },
+  {
     "id": "correlation",
     "title": "Correlation Constellation",
     "path": "sketches/correlation/index.html",
