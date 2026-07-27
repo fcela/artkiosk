@@ -28,7 +28,6 @@
     "id": "correlation",
     "title": "Correlation Constellation",
     "path": "sketches/correlation/index.html",
-    "enabled": false,
-    "description": "Twenty US ETFs placed only by how their daily returns move together; the cloud collapses in every crisis and separates again in calm."
+    "description": "Eighteen US ETFs placed only by how their weekly returns move together, replayed from 2007; the cloud collapses in every crisis and separates again in calm."
   }
 ]

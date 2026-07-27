@@ -38,6 +38,8 @@
     let started = 0;
     let scaleR = 300;
     let failed = false;
+    const t0Param = parseFloat(new URLSearchParams(location.search).get('t0'));
+    const startOffset = isFinite(t0Param) ? t0Param : 0;
 
     const GROUPS = {
       tech:      { color: [122, 172, 214], label: 'Technology' },
@@ -78,7 +80,7 @@
         z.push(new Array(WINDOW).fill(0));
         vols.push(0.15);
       }
-      scaleR = min(width, height) * 0.27;
+      scaleR = min(width, height) * 0.35;
       background(10, 10, 14);
       computeWindow(WINDOW);
       // Settle the layout before the first frame, so the piece opens on a
@@ -89,7 +91,7 @@
 
     function windowResized() {
       resizeCanvas(windowWidth, windowHeight);
-      scaleR = min(width, height) * 0.27;
+      scaleR = min(width, height) * 0.35;
       background(10, 10, 14);
     }
 
@@ -172,7 +174,9 @@
 
       const n = nodes.length;
       const total = data.dates.length;
-      const elapsed = (millis() - started) / 1000;
+      // ?t0=110 starts the replay part-way in, which is the only practical way
+      // to look at one particular week without waiting for it to come round.
+      const elapsed = startOffset + (millis() - started) / 1000;
       const span = REPLAY_SECONDS + HOLD_SECONDS;
       const phase = (elapsed % span) / REPLAY_SECONDS;
       weekIndex = Math.min(total - 1, Math.floor(phase * total));
@@ -221,10 +225,10 @@
         fill(255, 255, 255, 26);
         circle(p.x - p.r * 0.25, p.y - p.r * 0.3, p.r * 0.9);
 
-        fill(col[0], col[1], col[2], 150);
-        textSize(11);
+        fill(col[0], col[1], col[2], 225);
+        textSize(12);
         textAlign(LEFT, CENTER);
-        text(p.symbol, p.x + p.r + 6, p.y);
+        text(p.symbol, p.x + p.r + 7, p.y);
       }
       pop();
 
