@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interference</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+    // The whole piece is one full-screen quad evaluated per pixel: two sets of
+    // concentric rings at slightly different frequencies, read through a
+    // coordinate space that drifting bulges push around. Neither ring set
+    // contains the large shapes you see; those are the beat frequency between
+    // them, which is what makes the image move while the geometry stays still.
+
+    const SHADER_BODY = `
+uniform vec2 uRes;
+uniform float uTime;
+uniform vec4 uSeed;
+
+// A slow sine of the given period in seconds, offset by a per-load phase.
+float osc(float period, float phase) {
+  return sin(uTime * 6.2831853 / period + phase * 6.2831853);
+}
+
+vec3 hsv2rgb(vec3 c) {
+  vec3 k = abs(fract(c.xxx + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0);
+  return c.z * mix(vec3(1.0), clamp(k - 1.0, 0.0, 1.0), c.y);
+}
+
+// Band-limited square wave; x is measured in cycles. The transition width
+// tracks how fast x changes per pixel, so wherever the warp squeezes the
+// gratings below the pixel grid they fade to flat grey instead of aliasing
+// into crawling noise.
+float grating(float x) {
+  float w = clamp(fwidth(x) * 1.5, 0.0008, 0.5);
+  float tri = abs(fract(x) - 0.5) * 2.0;
+  return smoothstep(0.5 - w, 0.5 + w, tri);
+}
+
+// A travelling straight edge: 1 on one side, 0 on the other, antialiased
+// against the pixel grid. Blending two black-and-white patterns by any amount
+// in between would average them into grey, so every region of the image
+// commits to one treatment or the other and the boundary stays a hard line.
+float front(float ang, float wave, float speed, float phase, vec2 p) {
+  float g = sin(dot(p, vec2(cos(ang), sin(ang))) * wave - uTime * speed + phase * 6.2831853);
+  float w = max(fwidth(g), 1e-4);
+  return smoothstep(-w, w, g);
+}
+
+// Three invisible spheres pressing through the plane from behind: each pushes
+// nearby points outward with a gaussian falloff, magnifying the gratings there
+// so the flat pattern reads as relief.
+vec2 warp(vec2 p) {
+  for (int i = 0; i < 3; i++) {
+    float fi = float(i);
+    float period = 41.0 + fi * 17.0;
+    vec2 c = vec2(osc(period, uSeed.x + fi * 0.31),
+                  osc(period * 0.77, uSeed.y + fi * 0.53)) * 0.75;
+    float rad = 0.55 + 0.20 * osc(23.0 + fi * 9.0, uSeed.z + fi * 0.2);
+    float amp = 0.35 * (0.6 + 0.4 * osc(31.0 + fi * 13.0, uSeed.w + fi * 0.7));
+    vec2 d = p - c;
+    p += d * amp * exp(-dot(d, d) / (rad * rad));
+  }
+  return p;
+}
+
+void main() {
+  vec2 p = (gl_FragCoord.xy * 2.0 - uRes) / min(uRes.x, uRes.y);
+  vec2 q = warp(p);
+
+  float f = 16.0 + 5.0 * osc(67.0, uSeed.x);      // rings per unit
+  float e = 0.035 + 0.020 * osc(53.0, uSeed.y);   // detune between the two sets
+
+  // Ring centres drift apart and back together; their separation sets the
+  // shape of the interference, their detune sets its scale.
+  vec2 c1 = vec2(osc(87.0, uSeed.z), osc(71.0, uSeed.w)) * 0.35;
+  vec2 c2 = -c1 * (0.8 + 0.4 * osc(59.0, uSeed.x + 0.4));
+
+  float a = grating(length(q - c1) * f + uTime * 0.05);
+  float b = grating(length(q - c2) * f * (1.0 + e) - uTime * 0.04);
+
+  // A third layer of straight rulings, rotating far slower than anything else.
+  float ang = uTime * 0.012 + uSeed.y * 6.2831853;
+  float s = grating(dot(q, vec2(cos(ang), sin(ang))) * f * 0.55);
+
+  // Three fronts, each on its own heading and speed, cut the plane into panels.
+  // They decide, region by region, how the layers combine: minimum (ink over
+  // ink, sparse whites), difference (balanced and far more energetic), whether
+  // the rulings participate, and which way round figure and ground sit. Every
+  // operation maps black and white to black and white, so contrast never
+  // washes out no matter how the panels overlap.
+  float mMode = front(0.6 + uTime * 0.004, 0.90, 0.055, uSeed.x, p);
+  float mRule = front(2.3 - uTime * 0.003, 0.70, 0.042, uSeed.y, p);
+  float mPolarity = front(-1.1 + uTime * 0.005, 1.15, 0.031, uSeed.z, p);
+
+  float v = mix(min(a, b), abs(a - b), mMode);
+  v = mix(v, abs(v - s), mRule);
+  v = mix(v, 1.0 - v, mPolarity);
+
+  // Monochrome, but the white creeps through the hue circle over about five
+  // minutes and the black carries the complementary tint at low value. The
+  // saturation breathes on a slower cycle still, so the piece passes through
+  // neutral black-and-white on its way between tints.
+  float hue = fract(uSeed.x + uTime * 0.0035);
+  float sat = 0.045 + 0.045 * (0.5 + 0.5 * osc(131.0, uSeed.y));
+  vec3 ink = hsv2rgb(vec3(hue, sat, 1.0));
+  vec3 bg = hsv2rgb(vec3(fract(hue + 0.5), sat * 4.0, 0.045));
+  fragColor = vec4(mix(bg, ink, v), 1.0);
+}
+`;
+
+    const canvas = document.getElementById('c');
+    const opts = { antialias: false, alpha: false, depth: false, stencil: false };
+    const gl2 = canvas.getContext('webgl2', opts);
+    const gl = gl2 || canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts);
+
+    // fwidth() is core in GLSL ES 3.00 and an extension in 1.00, and the two
+    // dialects spell the fragment output differently, so the shared body above
+    // gets whichever prelude the available context needs.
+    let vertSrc, fragSrc;
+    if (gl2) {
+      vertSrc = '#version 300 es\nin vec2 aPos;\nvoid main(){ gl_Position = vec4(aPos, 0.0, 1.0); }';
+      fragSrc = '#version 300 es\nprecision highp float;\nout vec4 fragColor;\n' + SHADER_BODY;
+    } else if (gl) {
+      gl.getExtension('OES_standard_derivatives');
+      vertSrc = 'attribute vec2 aPos;\nvoid main(){ gl_Position = vec4(aPos, 0.0, 1.0); }';
+      fragSrc = '#extension GL_OES_standard_derivatives : enable\nprecision highp float;\n' +
+                '#define fragColor gl_FragColor\n' + SHADER_BODY;
+    }
+
+    function compile(type, src) {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(sh));
+      }
+      return sh;
+    }
+
+    if (gl) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, vertSrc));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fragSrc));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(prog));
+      }
+      gl.useProgram(prog);
+
+      // One triangle large enough to cover the viewport, which avoids the seam
+      // a two-triangle quad puts down the diagonal.
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, 'aPos');
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+      const uRes = gl.getUniformLocation(prog, 'uRes');
+      const uTime = gl.getUniformLocation(prog, 'uTime');
+      // Every load draws a different member of the family: the seed shifts the
+      // phase of all sixteen-odd oscillators, and the time offset changes how
+      // they line up with each other.
+      gl.uniform4f(gl.getUniformLocation(prog, 'uSeed'),
+        Math.random(), Math.random(), Math.random(), Math.random());
+      const t0 = Math.random() * 1000.0;
+
+      // Cap the drawing buffer at roughly 1080p worth of pixels: a per-pixel
+      // shader this heavy is fill-rate bound, and the gratings stay crisp well
+      // below native resolution on a high-density panel.
+      const MAX_PIXELS = 2.4e6;
+      function resize() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        let w = Math.max(1, Math.round(window.innerWidth * dpr));
+        let h = Math.max(1, Math.round(window.innerHeight * dpr));
+        const scale = Math.sqrt(MAX_PIXELS / (w * h));
+        if (scale < 1) {
+          w = Math.max(1, Math.round(w * scale));
+          h = Math.max(1, Math.round(h * scale));
+        }
+        canvas.width = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
+        gl.uniform2f(uRes, w, h);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      const start = performance.now();
+      (function frame(now) {
+        gl.uniform1f(uTime, t0 + (now - start) / 1000);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        requestAnimationFrame(frame);
+      })(start);
+    }
+  </script>
+</body>
+</html>

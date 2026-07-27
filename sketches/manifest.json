@@ -10,5 +10,11 @@
     "title": "Strange Attractor",
     "path": "sketches/strange-attractor/index.html",
     "description": "A mesmerizing, evolving cosmic web based on the Peter de Jong attractor."
+  },
+  {
+    "id": "interference",
+    "title": "Interference",
+    "path": "sketches/interference/index.html",
+    "description": "Op-art gratings read through a warped plane; the large shapes are the beat frequency between two ring sets."
   }
 ]
