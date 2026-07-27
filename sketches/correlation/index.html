@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Correlation Constellation</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0a0a0e; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <script>
+    // Twenty exchange-traded funds, positioned only by how their daily returns
+    // move together. The distance drawn between any two is sqrt(2(1-r)) for
+    // their correlation r over the trailing sixty trading days: identical
+    // behaviour puts them on top of one another, unrelated behaviour holds them
+    // apart. Nothing else places them - there are no axes and no prices here.
+    //
+    // Played back, the market's own structure does the animation. In quiet
+    // periods the sectors separate into recognisable neighbourhoods; in a panic
+    // every correlation runs toward one and the whole constellation collapses
+    // into a single knot, then breaks apart again as things calm.
+
+    const WINDOW = 60;          // trading days in the correlation window
+    const REPLAY_SECONDS = 165; // one pass through the history
+    const HOLD_SECONDS = 4;     // pause on the last day before looping
+
+    let data = null;
+    let nodes = [];
+    let corr = [];              // current correlation matrix
+    let vols = [];              // current annualised volatility, per asset
+    let z = [];                 // standardised returns for the window
+    let meanCorr = 0;
+    let dayIndex = 0;
+    let started = 0;
+    let scaleR = 300;
+    let failed = false;
+
+    const GROUPS = {
+      tech:      { color: [122, 172, 214], label: 'Technology' },
+      cyclical:  { color: [212, 170, 108], label: 'Cyclicals' },
+      energy:    { color: [200, 118, 88], label: 'Energy' },
+      defensive: { color: [138, 190, 158], label: 'Defensives' },
+      broad:     { color: [228, 226, 216], label: 'Broad market' },
+      rates:     { color: [150, 140, 204], label: 'Bonds & credit' },
+      metal:     { color: [226, 198, 118], label: 'Metals' }
+    };
+
+    function preload() {
+      data = loadJSON('data.json', () => {}, () => { failed = true; });
+    }
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      textFont('Helvetica Neue, Helvetica, Arial, sans-serif');
+      if (failed || !data || !data.assets) { failed = true; return; }
+
+      const n = data.assets.length;
+      for (let i = 0; i < n; i++) {
+        const a = data.assets[i];
+        // A ring is a neutral starting arrangement: no group begins nearer the
+        // middle than any other.
+        const th = (i / n) * TWO_PI;
+        nodes.push({
+          symbol: a.symbol,
+          name: a.name,
+          group: a.group,
+          returns: a.returns,
+          x: cos(th) * 220,
+          y: sin(th) * 220,
+          vx: 0, vy: 0,
+          r: 8
+        });
+        corr.push(new Array(n).fill(0));
+        z.push(new Array(WINDOW).fill(0));
+        vols.push(0.15);
+      }
+      scaleR = min(width, height) * 0.27;
+      background(10, 10, 14);
+      computeWindow(WINDOW);
+      // Settle the layout before the first frame, so the piece opens on a
+      // finished constellation instead of a ring unwinding itself.
+      for (let i = 0; i < 400; i++) relax();
+      started = millis();
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      scaleR = min(width, height) * 0.27;
+      background(10, 10, 14);
+    }
+
+    // Correlation over the window ending at `end`. Standardising each asset's
+    // returns first turns the correlation into a plain average of products, and
+    // leaves the volatility in hand for sizing the discs.
+    function computeWindow(end) {
+      const n = nodes.length;
+      const start = max(0, end - WINDOW + 1);
+      const len = end - start + 1;
+      if (len < 5) return;
+
+      for (let i = 0; i < n; i++) {
+        const rets = nodes[i].returns;
+        let mean = 0;
+        for (let k = 0; k < len; k++) mean += rets[start + k];
+        mean /= len;
+        let ss = 0;
+        for (let k = 0; k < len; k++) {
+          const d = rets[start + k] - mean;
+          z[i][k] = d;
+          ss += d * d;
+        }
+        const sd = Math.sqrt(ss / len) || 1;
+        for (let k = 0; k < len; k++) z[i][k] /= sd;
+        // Returns are stored in basis points, so a standard deviation of 100 is
+        // one percent a day; annualise it the usual way.
+        vols[i] = (sd / 10000) * Math.sqrt(252);
+      }
+
+      let sum = 0, pairs = 0;
+      for (let i = 0; i < n; i++) {
+        corr[i][i] = 1;
+        for (let j = i + 1; j < n; j++) {
+          let c = 0;
+          for (let k = 0; k < len; k++) c += z[i][k] * z[j][k];
+          c /= len;
+          corr[i][j] = corr[j][i] = c;
+          sum += c;
+          pairs++;
+        }
+      }
+      meanCorr = sum / max(1, pairs);
+    }
+
+    // One pass of stress relaxation: every pair pulls or pushes until the drawn
+    // distance matches the distance implied by its correlation.
+    function relax() {
+      const n = nodes.length;
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const a = nodes[i], b = nodes[j];
+          let dx = b.x - a.x, dy = b.y - a.y;
+          let d = Math.sqrt(dx * dx + dy * dy);
+          if (d < 0.001) { dx = random(-1, 1); dy = random(-1, 1); d = 1; }
+          const target = Math.sqrt(max(0, 2 * (1 - corr[i][j]))) * scaleR;
+          // Discs still need room to be read even when the market says zero.
+          const floor = (a.r + b.r) * 1.15;
+          const want = max(target, floor);
+          const f = (d - want) * 0.0075;
+          const ux = dx / d, uy = dy / d;
+          a.vx += ux * f; a.vy += uy * f;
+          b.vx -= ux * f; b.vy -= uy * f;
+        }
+      }
+      let cx = 0, cy = 0;
+      for (let i = 0; i < n; i++) { cx += nodes[i].x; cy += nodes[i].y; }
+      cx /= n; cy /= n;
+      for (let i = 0; i < n; i++) {
+        const p = nodes[i];
+        p.vx -= cx * 0.05; p.vy -= cy * 0.05;   // keep the whole thing centred
+        p.vx *= 0.82; p.vy *= 0.82;             // damping, or it never settles
+        p.x += p.vx; p.y += p.vy;
+      }
+    }
+
+    function draw() {
+      if (failed) { drawFailure(); return; }
+      if (!nodes.length) return;
+
+      const n = nodes.length;
+      const total = data.dates.length;
+      const elapsed = (millis() - started) / 1000;
+      const span = REPLAY_SECONDS + HOLD_SECONDS;
+      const phase = (elapsed % span) / REPLAY_SECONDS;
+      dayIndex = Math.min(total - 1, Math.floor(phase * total));
+      computeWindow(dayIndex);
+
+      for (let i = 0; i < n; i++) {
+        nodes[i].r = 5 + 22 * constrain((vols[i] - 0.08) / 0.45, 0, 1);
+      }
+      relax();
+      relax();
+
+      // Trails rather than a clean wipe: the paths the assets take as the market
+      // reorganises are half the picture.
+      noStroke();
+      fill(10, 10, 14, 30);
+      rect(0, 0, width, height);
+
+      push();
+      translate(width / 2, height / 2 - height * 0.02);
+
+      // Edges. Only strong relationships are drawn, or the frame is a hairball.
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const c = corr[i][j];
+          if (c > 0.55) {
+            stroke(150, 165, 195, map(c, 0.55, 1, 0, 70));
+            strokeWeight(map(c, 0.55, 1, 0.4, 1.6));
+            line(nodes[i].x, nodes[i].y, nodes[j].x, nodes[j].y);
+          } else if (c < -0.25) {
+            // The rare pairs moving against each other: worth seeing.
+            stroke(206, 132, 96, map(c, -0.25, -0.8, 0, 60));
+            strokeWeight(0.7);
+            line(nodes[i].x, nodes[i].y, nodes[j].x, nodes[j].y);
+          }
+        }
+      }
+
+      for (let i = 0; i < n; i++) {
+        const p = nodes[i];
+        const col = (GROUPS[p.group] || GROUPS.broad).color;
+        noStroke();
+        fill(col[0], col[1], col[2], 26);
+        circle(p.x, p.y, p.r * 3.4);
+        fill(col[0], col[1], col[2], 210);
+        circle(p.x, p.y, p.r * 2);
+        fill(255, 255, 255, 26);
+        circle(p.x - p.r * 0.25, p.y - p.r * 0.3, p.r * 0.9);
+
+        fill(col[0], col[1], col[2], 150);
+        textSize(11);
+        textAlign(LEFT, CENTER);
+        text(p.symbol, p.x + p.r + 6, p.y);
+      }
+      pop();
+
+      drawChrome(total);
+    }
+
+    // The caption, the legend and the clock. Kept quiet and to the margins: the
+    // constellation should be able to hold the room on its own.
+    function drawChrome(total) {
+      const m = Math.round(min(width, height) * 0.055);
+      noStroke();
+
+      fill(232, 230, 222, 200);
+      textAlign(LEFT, TOP);
+      textSize(15);
+      text('CORRELATION CONSTELLATION', m, m);
+      fill(150, 150, 158, 175);
+      textSize(11.5);
+      text('Twenty US exchange-traded funds, placed by the correlation of their daily returns\n' +
+           'over the previous ' + WINDOW + ' trading days. Disc size is trailing volatility.',
+           m, m + 22);
+
+      // The date, set large, because the whole piece is a clock.
+      const d = data.dates[dayIndex] || '';
+      fill(236, 234, 226, 225);
+      textAlign(LEFT, BOTTOM);
+      textSize(34);
+      text(d.slice(0, 4), m, height - m - 20);
+      // Measure the year at its own size, before switching to the smaller one.
+      const yearW = textWidth(d.slice(0, 4));
+      fill(150, 150, 158, 190);
+      textSize(13);
+      text(monthDay(d), m + yearW + 12, height - m - 24);
+
+      // How tightly the market is moving as one thing. This number is the piece
+      // in a single figure: it sits near 0.4 in calm weather and above 0.8 when
+      // everyone is selling everything.
+      const barW = min(260, width * 0.22);
+      const bx = width - m - barW, by = height - m - 30;
+      fill(150, 150, 158, 175);
+      textAlign(LEFT, BOTTOM);
+      textSize(11.5);
+      text('AVERAGE PAIRWISE CORRELATION', bx, by - 12);
+      fill(60, 60, 70, 200);
+      rect(bx, by, barW, 3);
+      const v = constrain(meanCorr, 0, 1);
+      fill(lerpColor(color(120, 160, 200), color(226, 140, 96), v));
+      rect(bx, by, barW * v, 3);
+      fill(232, 230, 222, 215);
+      textAlign(RIGHT, BOTTOM);
+      textSize(22);
+      text(nf(meanCorr, 1, 2), width - m, by - 8);
+
+      // Where we are in the history.
+      const tW = width - m * 2;
+      fill(60, 60, 70, 160);
+      rect(m, height - m - 3, tW, 1.5);
+      fill(232, 230, 222, 200);
+      rect(m + tW * (dayIndex / max(1, total - 1)) - 1, height - m - 6, 2, 7);
+
+      // Legend, one line, right aligned under the caption.
+      const keys = Object.keys(GROUPS);
+      let lx = width - m;
+      textAlign(RIGHT, TOP);
+      textSize(11);
+      for (let i = keys.length - 1; i >= 0; i--) {
+        const g = GROUPS[keys[i]];
+        fill(g.color[0], g.color[1], g.color[2], 190);
+        text(g.label, lx, m);
+        lx -= textWidth(g.label) + 22;
+      }
+    }
+
+    function monthDay(iso) {
+      if (!iso) return '';
+      const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+        'August', 'September', 'October', 'November', 'December'];
+      const parts = iso.split('-');
+      return months[parseInt(parts[1], 10) - 1] + ' ' + parseInt(parts[2], 10);
+    }
+
+    function drawFailure() {
+      background(10, 10, 14);
+      fill(150, 150, 158);
+      textAlign(CENTER, CENTER);
+      textSize(14);
+      text('data.json has not been fetched yet', width / 2, height / 2);
+      noLoop();
+    }
+  </script>
+</body>
+</html>

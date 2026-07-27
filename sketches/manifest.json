@@ -17,5 +17,18 @@
     "title": "Interference",
     "path": "sketches/interference/index.html",
     "description": "Op-art gratings read through a warped plane; the large shapes are the beat frequency between two ring sets."
+  },
+  {
+    "id": "lavender-valley",
+    "title": "Lavender Valley",
+    "path": "sketches/lavender-valley/index.html",
+    "description": "Lavender Valley, with Cat and Yarn."
+  },
+  {
+    "id": "correlation",
+    "title": "Correlation Constellation",
+    "path": "sketches/correlation/index.html",
+    "enabled": false,
+    "description": "Twenty US ETFs placed only by how their daily returns move together; the cloud collapses in every crisis and separates again in calm."
   }
 ]

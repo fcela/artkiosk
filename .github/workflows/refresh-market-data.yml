@@ -1,0 +1,36 @@
+name: Refresh market data
+
+# The constellation sketch reads a committed snapshot rather than calling an API
+# from the browser, because the kiosk is a static site and the key would be
+# public. This keeps the snapshot current instead.
+on:
+  schedule:
+    # 23:10 UTC on weekdays, after the US close has settled.
+    - cron: '10 23 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch daily closes
+        env:
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+        run: python3 tools/fetch_market_data.py
+
+      - name: Commit if the data moved
+        run: |
+          if git diff --quiet -- sketches/correlation/data.json; then
+            echo "no change"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sketches/correlation/data.json
+          git commit -m "Refresh market data for the correlation sketch"
+          git push
