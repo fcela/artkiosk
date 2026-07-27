@@ -25,8 +25,10 @@
 
     const WINDOW = 26;          // weeks in the correlation window: half a year
     const PERIODS_PER_YEAR = 52;
-    const REPLAY_SECONDS = 165; // one pass through the history
-    const HOLD_SECONDS = 4;     // pause on the last week before looping
+    // One pass through nineteen years. The kiosk gives each sketch three
+    // minutes, so this is set to end a little inside that.
+    const REPLAY_SECONDS = 172;
+    const HOLD_SECONDS = 5;     // pause on the last week before looping
 
     let data = null;
     let nodes = [];
@@ -51,8 +53,86 @@
       metal:     { color: [226, 198, 118], label: 'Metals' }
     };
 
+    // What was happening while the shape on screen was forming. Each entry runs
+    // from the week the market started pricing the thing to roughly the week it
+    // stopped dominating, so the caption tends to lead the newspapers a little.
+    //
+    // Periods with nothing to say are left empty on purpose: the caption simply
+    // disappears rather than reaching for something to fill the space.
+    const EVENTS = [
+      ['2007-06-01', '2007-10-15', 'The credit crunch begins',
+       'Two Bear Stearns mortgage funds collapse in June. On 9 August BNP Paribas freezes three funds, saying it cannot value their holdings, and interbank lending seizes up.'],
+      ['2007-10-16', '2008-02-28', 'The market turns',
+       'The S&P 500 peaks on 9 October and rolls over. Northern Rock has already suffered the first run on a British bank in 140 years; the Fed begins cutting.'],
+      ['2008-03-01', '2008-08-31', 'Bear Stearns fails',
+       'JPMorgan buys Bear Stearns over a weekend in March with Fed support. Oil runs to nearly $150 in July while the financial system keeps deteriorating.'],
+      ['2008-09-01', '2008-12-31', 'Lehman, and the panic',
+       'Lehman Brothers files on 15 September, AIG is rescued the next day, and a money market fund breaks the buck. Everything is sold at once except Treasuries.'],
+      ['2009-01-01', '2009-06-30', 'The bottom',
+       'The S&P 500 troughs at 666 on 9 March, down 57% from the peak, and then rallies hard as the Fed expands asset purchases.'],
+      ['2010-04-01', '2010-08-31', 'Greece, and the flash crash',
+       'The euro area assembles its first Greek rescue. On 6 May the US market falls and recovers roughly nine percent within minutes.'],
+      ['2011-03-01', '2011-05-31', 'Tohoku',
+       'A magnitude nine earthquake and the Fukushima accident disrupt global supply chains and shut down Japanese output.'],
+      ['2011-07-01', '2011-12-31', 'The euro crisis, and a downgrade',
+       'S&P strips the United States of its AAA rating in August. Italian and Spanish yields climb toward levels that would price a break-up of the currency union.'],
+      ['2012-06-01', '2012-10-31', '"Whatever it takes"',
+       'Draghi promises in July that the ECB will do whatever it takes to preserve the euro. The Fed follows in September with open-ended purchases.'],
+      ['2013-05-01', '2013-09-30', 'The taper tantrum',
+       'A hint that the Fed might slow its purchases sends long yields up more than a point in four months, and hits everything that had been bought for yield.'],
+      ['2014-07-01', '2015-03-31', 'Oil collapses',
+       'Crude falls from about $107 in June to under $50 by January as OPEC declines to cut output, taking energy equities and high yield credit with it.'],
+      ['2015-08-01', '2016-03-31', 'China, and the first hike',
+       'Beijing devalues the yuan in August and equities fall worldwide. In December the Fed raises rates for the first time in nine years; oil bottoms near $26.'],
+      ['2016-06-01', '2016-08-31', 'Brexit',
+       'The United Kingdom votes to leave the European Union on 23 June. Sterling falls the most in its modern history and yields hit record lows.'],
+      ['2016-11-01', '2017-03-31', 'The reflation trade',
+       'The US election is followed by a rotation out of bonds and into banks, industrials and small caps on expectations of tax cuts and spending.'],
+      ['2018-01-15', '2018-04-30', 'Volmageddon',
+       'Volatility spikes on 5 February and the products that had been sold short of it collapse, wiping out several billion dollars in a single session.'],
+      ['2018-10-01', '2019-02-28', 'The fourth quarter selloff',
+       'The Fed keeps raising rates into a slowing economy and equities fall about twenty percent from the September high, bottoming on Christmas Eve.'],
+      ['2019-07-01', '2019-11-30', 'The mid-cycle adjustment',
+       'The Fed cuts three times without a recession, the yield curve inverts in August, and repo rates spike in September.'],
+      ['2020-02-15', '2020-06-30', 'The pandemic',
+       'Everything is sold at once - equities, credit, even Treasuries and gold - until the Fed commits to unlimited purchases on 23 March and the market turns that week.'],
+      ['2020-10-15', '2021-04-30', 'Vaccines, and the meme rally',
+       'Vaccine efficacy is announced in November and the rotation into cyclicals begins. In January retail traders squeeze several heavily shorted stocks.'],
+      ['2021-10-01', '2022-02-15', 'Inflation stops being transitory',
+       'Powell retires the word in November as inflation reaches levels not seen since the early 1980s, and the Fed prepares to tighten quickly.'],
+      ['2022-02-16', '2022-07-31', 'Ukraine, and the fastest tightening in forty years',
+       'Russia invades in February and commodities spike. The Fed raises by 75 basis points at a time; stocks and bonds fall together, so the usual hedge stops working.'],
+      ['2022-09-01', '2022-12-31', 'The gilt crisis',
+       'A UK budget triggers a collapse in long gilts and forced selling by pension funds, and the Bank of England intervenes. Equities bottom in October.'],
+      ['2023-03-01', '2023-06-30', 'The regional banks',
+       'Silicon Valley Bank fails on 10 March after a run, Signature follows, and Credit Suisse is absorbed by UBS the following weekend.'],
+      ['2023-07-01', '2024-06-30', 'Concentration',
+       'A handful of very large technology companies account for most of the index return, so the market looks calm in aggregate while everything else does not participate.'],
+      ['2024-07-15', '2024-10-31', 'The carry unwind',
+       'A Bank of Japan rate rise in July forces an abrupt unwinding of yen-funded positions, and volatility spikes on 5 August before recovering within weeks.']
+    ];
+
     function preload() {
       data = loadJSON('data.json', () => {}, () => { failed = true; });
+    }
+
+    // The entry covering this week, if there is one, with a fade weight that
+    // goes to zero over the first and last fortnight so captions arrive and
+    // leave rather than snapping on.
+    function eventAt(day) {
+      for (let i = 0; i < EVENTS.length; i++) {
+        const e = EVENTS[i];
+        if (day >= e[0] && day <= e[1]) {
+          const a = daysBetween(e[0], day);
+          const b = daysBetween(day, e[1]);
+          return { title: e[2], note: e[3], weight: constrain(min(a, b) / 14, 0, 1) };
+        }
+      }
+      return null;
+    }
+
+    function daysBetween(a, b) {
+      return (Date.parse(b) - Date.parse(a)) / 86400000;
     }
 
     function setup() {
@@ -151,7 +231,7 @@
           // Discs still need room to be read even when the market says zero.
           const floor = (a.r + b.r) * 1.15;
           const want = max(target, floor);
-          const f = (d - want) * 0.0075;
+          const f = (d - want) * 0.0055;
           const ux = dx / d, uy = dy / d;
           a.vx += ux * f; a.vy += uy * f;
           b.vx -= ux * f; b.vy -= uy * f;
@@ -163,7 +243,7 @@
       for (let i = 0; i < n; i++) {
         const p = nodes[i];
         p.vx -= cx * 0.05; p.vy -= cy * 0.05;   // keep the whole thing centred
-        p.vx *= 0.82; p.vy *= 0.82;             // damping, or it never settles
+        p.vx *= 0.88; p.vy *= 0.88;             // damping, or it never settles
         p.x += p.vx; p.y += p.vy;
       }
     }
@@ -185,7 +265,8 @@
       for (let i = 0; i < n; i++) {
         nodes[i].r = 5 + 22 * constrain((vols[i] - 0.08) / 0.45, 0, 1);
       }
-      relax();
+      // One pass, not two: the layout then lags the correlation slightly and
+      // the assets glide to their new places instead of snapping to them.
       relax();
 
       // Trails rather than a clean wipe: the paths the assets take as the market
@@ -214,16 +295,47 @@
         }
       }
 
+      // Each asset is drawn twice over. The outer ring is how volatile it has
+      // been over the window - how much it is capable of moving. The core is
+      // what it actually did this week: filled pale and near the size of the
+      // ring on a big week up, dark and sunk inside it on a big week down, and
+      // barely there at all when nothing happened. A wide ring with a small
+      // core is an asset that has been dangerous but was quiet this week.
       for (let i = 0; i < n; i++) {
         const p = nodes[i];
         const col = (GROUPS[p.group] || GROUPS.broad).color;
+        const ret = (p.returns[weekIndex] || 0) / 10000;
+        // A 5% week fills the ring, but compressed rather than linear: most
+        // weeks are one or two percent, and on a linear scale every one of them
+        // would draw the same near-empty dot.
+        const mag = constrain(pow(abs(ret) / 0.05, 0.6), 0, 1);
+        const core = p.r * (0.28 + 0.72 * mag);
+        const up = ret >= 0;
+
         noStroke();
-        fill(col[0], col[1], col[2], 26);
+        fill(col[0], col[1], col[2], 22);
         circle(p.x, p.y, p.r * 3.4);
-        fill(col[0], col[1], col[2], 210);
+        // The volatility ring: an outline, so the core can be read against it.
+        fill(col[0], col[1], col[2], 34);
         circle(p.x, p.y, p.r * 2);
-        fill(255, 255, 255, 26);
-        circle(p.x - p.r * 0.25, p.y - p.r * 0.3, p.r * 0.9);
+        noFill();
+        stroke(col[0], col[1], col[2], 165);
+        strokeWeight(1.6);
+        circle(p.x, p.y, p.r * 2);
+
+        noStroke();
+        if (up) {
+          // Up weeks are lit: the group colour carried toward white.
+          fill(lerp(col[0], 255, 0.45 * mag + 0.1),
+               lerp(col[1], 252, 0.45 * mag + 0.1),
+               lerp(col[2], 240, 0.45 * mag + 0.1), 240);
+        } else {
+          // Down weeks are sunk: the same colour taken toward the background.
+          fill(lerp(col[0], 16, 0.55 * mag + 0.15),
+               lerp(col[1], 16, 0.55 * mag + 0.15),
+               lerp(col[2], 22, 0.55 * mag + 0.15), 240);
+        }
+        circle(p.x, p.y, core * 2);
 
         fill(col[0], col[1], col[2], 225);
         textSize(12);
@@ -248,7 +360,8 @@
       fill(150, 150, 158, 175);
       textSize(11.5);
       text('Eighteen US exchange-traded funds, placed by the correlation of their weekly returns\n' +
-           'over the previous ' + WINDOW + ' weeks. Disc size is trailing volatility.',
+           'over the previous ' + WINDOW + ' weeks. The ring is trailing volatility; the core is this\n' +
+           'week\'s return, pale when it rose and dark when it fell.',
            m, m + 22);
 
       // The date, set large, because the whole piece is a clock.
@@ -262,6 +375,27 @@
       fill(150, 150, 158, 190);
       textSize(13);
       text(monthDay(d), m + yearW + 12, height - m - 24);
+
+      // What was going on while this shape was forming. Set above the date, in
+      // a column narrow enough to read at a distance. p5 anchors wrapped text
+      // by the top of its box, so the block is laid out downward from a top
+      // edge computed to leave the date clear.
+      const ev = eventAt(d);
+      if (ev) {
+        const colW = min(440, width * 0.34);
+        // The date is 34px set on a baseline at height-m-20, so its cap top sits
+        // near height-m-56; the note block is stacked to finish clear of that.
+        const noteTop = height - m - 142;
+        textAlign(LEFT, BOTTOM);
+        fill(228, 226, 218, 215 * ev.weight);
+        textSize(15);
+        text(ev.title, m, noteTop - 10);
+        fill(146, 146, 156, 195 * ev.weight);
+        textAlign(LEFT, TOP);
+        textSize(12);
+        textLeading(16);
+        text(ev.note, m, noteTop, colW, 68);
+      }
 
       // How tightly the market is moving as one thing. This number is the piece
       // in a single figure: it sits near 0.4 in calm weather and above 0.8 when
