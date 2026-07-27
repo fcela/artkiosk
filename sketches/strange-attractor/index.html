@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Strange Attractor</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <style>
+    body { 
+      margin: 0; 
+      padding: 0; 
+      background-color: #030305; 
+      overflow: hidden; 
+    }
+    canvas { 
+      display: block; 
+    }
+  </style>
+</head>
+<body>
+  <script>
+    let particles = [];
+    const numParticles = 15000;
+    
+    // Initial Peter de Jong attractor parameters
+    let a = 1.4;
+    let b = -2.3;
+    let c = 2.4;
+    let d = -2.1;
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      background(3, 3, 5);
+      colorMode(HSB, 360, 100, 100, 1);
+      
+      // Initialize particles randomly
+      for (let i = 0; i < numParticles; i++) {
+        particles.push({
+          x: random(-2, 2),
+          y: random(-2, 2)
+        });
+      }
+    }
+
+    function draw() {
+      // Fade background to create motion trails
+      fill(3, 3, 5, 0.08);
+      noStroke();
+      rect(0, 0, width, height);
+      
+      translate(width / 2, height / 2);
+      
+      // Scale based on screen size
+      let scaleF = min(width, height) / 4.2;
+      
+      strokeWeight(1.5);
+      
+      for (let i = 0; i < numParticles; i++) {
+        let p = particles[i];
+        
+        // Compute next position based on the attractor equations
+        let xn = sin(a * p.y) - cos(b * p.x);
+        let yn = sin(c * p.x) - cos(d * p.y);
+        
+        // Map position to a shifting hue
+        let hue = (frameCount * 0.15 + (p.x + p.y + 4) * 50) % 360;
+        stroke(hue, 85, 100, 0.4);
+        
+        // Move particle smoothly towards the target point
+        p.x = lerp(p.x, xn, 0.06);
+        p.y = lerp(p.y, yn, 0.06);
+        
+        point(p.x * scaleF, p.y * scaleF);
+      }
+      
+      // Slowly mutate the attractor parameters for an evolving shape
+      a += 0.0003;
+      b -= 0.0002;
+      c += 0.0004;
+      d -= 0.0005;
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      background(3, 3, 5);
+    }
+  </script>
+</body>
+</html>

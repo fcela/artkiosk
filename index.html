@@ -56,11 +56,59 @@
         || el.msRequestFullscreen;
       if (request) request.call(el).catch(() => {});
       overlay.remove();
+      requestWakeLock();
     }, { once: true });
+  </script>
+  <script>
+    // A canvas animation alone doesn't stop a device from locking its
+    // screen the way a playing <video> does (that's why YouTube fullscreen
+    // never locks but our p5 sketches did). Two independent defenses:
+
+    // 1. The standards-based Screen Wake Lock API. Re-request on every
+    // visibility change, since the lock is released whenever the tab/screen
+    // is hidden and isn't automatically restored.
+    let wakeLock = null;
+    function requestWakeLock() {
+      if (!('wakeLock' in navigator)) return;
+      navigator.wakeLock.request('screen').then(lock => {
+        wakeLock = lock;
+      }).catch(() => {});
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') requestWakeLock();
+    });
+    requestWakeLock();
+
+    // 2. Fallback for browsers without Wake Lock support: a genuinely
+    // playing (muted, looping) <video>, matching the "video is playing"
+    // state that platform idle timers exempt. Built from a live canvas
+    // stream instead of a bundled video file, so nothing needs to be shipped.
+    const keepAwakeCanvas = document.createElement('canvas');
+    keepAwakeCanvas.width = 2;
+    keepAwakeCanvas.height = 2;
+    const kaCtx = keepAwakeCanvas.getContext('2d');
+    (function paint() {
+      kaCtx.fillRect(0, 0, 2, 2);
+      requestAnimationFrame(paint);
+    })();
+
+    if (keepAwakeCanvas.captureStream) {
+      const keepAwakeVideo = document.createElement('video');
+      keepAwakeVideo.srcObject = keepAwakeCanvas.captureStream(1);
+      keepAwakeVideo.muted = true;
+      keepAwakeVideo.setAttribute('playsinline', '');
+      keepAwakeVideo.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;';
+      document.body.appendChild(keepAwakeVideo);
+      keepAwakeVideo.play().catch(() => {});
+    }
   </script>
   <script>
     // How long each sketch stays on screen before rotating, in milliseconds.
     const ROTATE_MS = 3 * 60 * 1000;
+    // How often to re-fetch the sketch list, so newly added/removed sketches
+    // show up on a kiosk tab that's been running for days without ever
+    // reloading the page (a reload would exit fullscreen).
+    const REFRESH_MANIFEST_MS = 30 * 60 * 1000;
 
     const stage = document.getElementById('stage');
     let sketches = [];
@@ -77,15 +125,30 @@
       showCurrent();
     }
 
-    fetch('sketches/manifest.json')
-      .then(res => res.json())
-      .then(list => {
+    function fetchManifest() {
+      return fetch('sketches/manifest.json?t=' + Date.now()).then(res => res.json());
+    }
+
+    function refreshManifest() {
+      fetchManifest().then(list => {
+        if (list.length === 0) return;
+        const currentId = sketches[current] && sketches[current].id;
         sketches = list;
-        // Start on a random sketch so a fleet of devices doesn't stay in lockstep.
-        current = Math.floor(Math.random() * sketches.length);
-        showCurrent();
-        setInterval(advance, ROTATE_MS);
-      });
+        // Keep showing the same sketch if it still exists, rather than
+        // jumping to a different one just because the list changed.
+        const idx = sketches.findIndex(s => s.id === currentId);
+        current = idx !== -1 ? idx : current % sketches.length;
+      }).catch(() => {});
+    }
+
+    fetchManifest().then(list => {
+      sketches = list;
+      // Start on a random sketch so a fleet of devices doesn't stay in lockstep.
+      current = Math.floor(Math.random() * sketches.length);
+      showCurrent();
+      setInterval(advance, ROTATE_MS);
+      setInterval(refreshManifest, REFRESH_MANIFEST_MS);
+    });
   </script>
 </body>
 </html>

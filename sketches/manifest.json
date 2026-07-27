@@ -6,9 +6,9 @@
     "description": "Particle trails following a noise-based vector field."
   },
   {
-    "id": "kaleidoscope",
-    "title": "Kaleidoscope",
-    "path": "sketches/kaleidoscope/index.html",
-    "description": "Rotating symmetric bloom cycling through hues, mirrored across wedges."
+    "id": "strange-attractor",
+    "title": "Strange Attractor",
+    "path": "sketches/strange-attractor/index.html",
+    "description": "A mesmerizing, evolving cosmic web based on the Peter de Jong attractor."
   }
 ]
