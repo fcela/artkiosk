@@ -55,52 +55,92 @@
       }
     }
     
-    let timeOffset = 0;
+    let offset = 0;
     
     function draw() {
       if (!dataLoaded) return;
       
-      // Beautiful fade effect for trails
-      background(0, 15);
-      
-      noFill();
-      strokeWeight(1.2);
+      // Slower fade for denser trails
+      background(0, 10);
       
       let radius = min(width, height) * 0.25;
       
-      // Draw 3 layers corresponding to the 3 metrics, rotating perfectly in sync
-      drawRing(rates, timeOffset, color(255, 80, 100, 100), radius * 0.7, 1.2);
-      drawRing(unemp, timeOffset, color(80, 180, 255, 100), radius * 1.1, 1.8);
-      drawRing(inflation, timeOffset, color(255, 200, 80, 100), radius * 1.4, 0.9);
+      let steps = 1500;
       
-      timeOffset += 0.003;
+      // Draw the connective web (divergence triangles)
+      strokeWeight(0.5);
+      for (let i = 0; i < steps; i += 3) { // Skip some steps for the web to look like distinct threads
+        let angle = map(i, 0, steps, 0, TWO_PI);
+        let shiftedAngle = (angle + offset) % TWO_PI;
+        if (shiftedAngle < 0) shiftedAngle += TWO_PI;
+        
+        // We use rates.length as the baseline timeline length
+        let exactIndex = map(shiftedAngle, 0, TWO_PI, 0, rates.length - 1);
+        exactIndex = constrain(exactIndex, 0, rates.length - 1);
+        
+        let idx1 = floor(exactIndex);
+        let idx2 = min(idx1 + 1, rates.length - 1);
+        let frac = exactIndex - idx1;
+        
+        // Safely get interpolated values for all three (using constrained indices for the others just in case lengths differ slightly)
+        let getVal = (arr) => {
+          let i1 = min(idx1, arr.length - 1);
+          let i2 = min(idx2, arr.length - 1);
+          return lerp(arr[i1], arr[i2], frac);
+        };
+        
+        let vRates = getVal(rates);
+        let vUnemp = getVal(unemp);
+        let vInf = getVal(inflation);
+        
+        let noiseVal = noise(cos(angle) * 1.5 + offset, sin(angle) * 1.5 + offset);
+        let nOffset = map(noiseVal, 0, 1, -30, 30);
+        
+        let rR = radius * 0.7 + map(vRates, -2, 20, -30, 120) * 1.2 + nOffset;
+        let rU = radius * 1.1 + map(vUnemp, -2, 20, -30, 120) * 1.8 + nOffset;
+        let rI = radius * 1.4 + map(vInf, -2, 20, -30, 120) * 0.9 + nOffset;
+        
+        let xR = width/2 + rR * cos(angle); let yR = height/2 + rR * sin(angle);
+        let xU = width/2 + rU * cos(angle); let yU = height/2 + rU * sin(angle);
+        let xI = width/2 + rI * cos(angle); let yI = height/2 + rI * sin(angle);
+        
+        // The connective tissue - opacity based on divergence
+        stroke(255, 255, 255, 12);
+        line(xR, yR, xU, yU);
+        line(xU, yU, xI, yI);
+        line(xI, yI, xR, yR);
+      }
+      
+      // Draw the main solid rings over the web
+      strokeWeight(1.5);
+      noFill();
+      drawDataRing(rates, color(255, 80, 100, 200), radius * 0.7, 1.2);
+      drawDataRing(unemp, color(80, 180, 255, 200), radius * 1.1, 1.8);
+      drawDataRing(inflation, color(255, 200, 80, 200), radius * 1.4, 0.9);
+      
+      // Slow down the movement significantly
+      offset += 0.0005;
     }
     
-    function drawRing(dataArr, offset, c, baseRadius, ampMultiplier) {
+    // Helper to draw the solid outer lines
+    function drawDataRing(dataArr, c, baseRadius, ampMultiplier) {
       stroke(c);
       beginShape();
-      // High number of steps prevents aliasing/jitter when scanning jagged economic data
       let steps = 1500;
       for (let i = 0; i < steps; i++) {
         let angle = map(i, 0, steps, 0, TWO_PI);
-        // Map the angle linearly so the dataset wraps around the circle once without mirroring.
-        // We use offset to spin the data around the circle.
         let shiftedAngle = (angle + offset) % TWO_PI;
         if (shiftedAngle < 0) shiftedAngle += TWO_PI;
         
         let exactIndex = map(shiftedAngle, 0, TWO_PI, 0, dataArr.length - 1);
         exactIndex = constrain(exactIndex, 0, dataArr.length - 1);
         
-        // Linearly interpolate between the two nearest data points for perfectly smooth motion
         let idx1 = floor(exactIndex);
         let idx2 = min(idx1 + 1, dataArr.length - 1);
         let frac = exactIndex - idx1;
         let val = lerp(dataArr[idx1], dataArr[idx2], frac);
         
-        // Map the economic value to a radius perturbation
         let r = baseRadius + map(val, -2, 20, -30, 120) * ampMultiplier;
-        
-        // Add perlin noise for an organic, shifting feel
         let noiseVal = noise(cos(angle) * 1.5 + offset, sin(angle) * 1.5 + offset);
         r += map(noiseVal, 0, 1, -30, 30);
         
