@@ -4,160 +4,223 @@
   <meta charset="UTF-8">
   <title>Economic Tides</title>
   <style>
-    body {
-      margin: 0;
-      padding: 0;
-      background: #000;
-      overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    canvas {
-      display: block;
-    }
+    body { margin: 0; padding: 0; background: #000; overflow: hidden;
+           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    canvas { display: block; }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
 </head>
 <body>
-  <script>
-    let fedFunds, unrate, cpi;
-    let dataLoaded = false;
-    
-    let rates = [];
-    let unemp = [];
-    let inflation = [];
-    
-    function preload() {
-      // Load CSVs downloaded from FRED
-      fedFunds = loadTable('FEDFUNDS.csv', 'csv', 'header');
-      unrate = loadTable('UNRATE.csv', 'csv', 'header');
-      cpi = loadTable('CPIAUCSL.csv', 'csv', 'header');
+<script>
+  // Economic Tides — FRED data as three concentric rings.
+  //   red    = Federal Funds Rate
+  //   blue   = Unemployment Rate
+  //   gold   = YoY CPI Inflation
+  //
+  // Ring radius = indicator value. Veilband between rings encodes the
+  // divergence between indicators: wide band = the two indicators disagree
+  // (stagflation, Volcker shock), tight band = they move together.
+
+  let fedFunds, unrate, cpi;
+  let dataLoaded = false;
+  let rates = [], unemp = [], inflation = [];
+  let timeOffset = 0;
+  let SEGS = 360;
+  const MAP_LO = -2, MAP_HI = 20, MAP_FROM = -30, MAP_TO = 120;
+
+  function preload() {
+    fedFunds = loadTable('FEDFUNDS.csv',  'csv', 'header');
+    unrate   = loadTable('UNRATE.csv',    'csv', 'header');
+    cpi      = loadTable('CPIAUCSL.csv',  'csv', 'header');
+  }
+
+  function setup() {
+    createCanvas(windowWidth, windowHeight);
+    background(0);
+    if (!fedFunds || !unrate || !cpi) return;
+    let safe = v => (v && v.trim() !== '') ? Number(v) : NaN;
+    rates    = fedFunds.getColumn('FEDFUNDS').map(safe).filter(n => !isNaN(n));
+    unemp    = unrate  .getColumn('UNRATE')  .map(safe).filter(n => !isNaN(n));
+    let cpiRaw = cpi.getColumn('CPIAUCSL').map(safe).filter(n => !isNaN(n));
+    for (let i = 12; i < cpiRaw.length; i++) {
+      let v = ((cpiRaw[i] - cpiRaw[i - 12]) / cpiRaw[i - 12]) * 100;
+      if (!isNaN(v) && isFinite(v)) inflation.push(v);
     }
-    
-    function setup() {
-      createCanvas(windowWidth, windowHeight);
-      background(0);
-      
-      // Parse data
-      if (fedFunds && unrate && cpi) {
-        // Filter out empty strings before converting to numbers to prevent false 0s
-        let safeNumber = (val) => val.trim() !== '' ? Number(val) : NaN;
-        rates = fedFunds.getColumn('FEDFUNDS').map(safeNumber).filter(n => !isNaN(n));
-        unemp = unrate.getColumn('UNRATE').map(safeNumber).filter(n => !isNaN(n));
-        
-        // Calculate YoY inflation rate from CPI index
-        let cpiRaw = cpi.getColumn('CPIAUCSL').map(safeNumber).filter(n => !isNaN(n));
-        for(let i = 12; i < cpiRaw.length; i++) {
-          let val = ((cpiRaw[i] - cpiRaw[i-12]) / cpiRaw[i-12]) * 100;
-          if(!isNaN(val) && isFinite(val)) inflation.push(val);
-        }
-        
-        dataLoaded = true;
+    dataLoaded = true;
+  }
+
+  function draw() {
+    if (!dataLoaded) return;
+
+    // Long trail persistence: marks accumulate into luminous density
+    background(0, 14);
+
+    let cx = width / 2, cy = height / 2;
+    let R  = min(width, height) * 0.25;
+
+    // Resting radii for the three rings (spacing encodes the indicator hierarchy)
+    let bases = [R * 0.70, R * 1.10, R * 1.40];
+    let amps  = [1.2, 1.8, 0.9];
+    let cols  = [[255, 80, 100], [80, 180, 255], [255, 200, 80]];
+    let series = [rates, unemp, inflation];
+
+    // --- Compute all ring points (360 per ring) ---
+    let rings = [[], [], []];
+    for (let s = 0; s < SEGS; s++) {
+      let angle = map(s, 0, SEGS, 0, TWO_PI);
+      let shiftedAngle = (angle + timeOffset) % TWO_PI;
+      if (shiftedAngle < 0) shiftedAngle += TWO_PI;
+
+      let exactIndex = map(shiftedAngle, 0, TWO_PI, 0, rates.length - 1);
+      exactIndex = constrain(exactIndex, 0, rates.length - 1);
+      let idx1 = floor(exactIndex);
+      let idx2 = min(idx1 + 1, rates.length - 1);
+      let frac = exactIndex - idx1;
+
+      let nVal = noise(cos(angle) * 1.5 + timeOffset, sin(angle) * 1.5 + timeOffset);
+      let nOff = map(nVal, 0, 1, -25, 25);
+
+      for (let r = 0; r < 3; r++) {
+        let val = lerp(series[r][idx1], series[r][idx2], frac);
+        let rad = bases[r] + map(val, MAP_LO, MAP_HI, MAP_FROM, MAP_TO) * amps[r] + nOff;
+        rings[r].push({ x: cx + cos(angle) * rad, y: cy + sin(angle) * rad, v: val });
       }
     }
-    
-    let offset = 0;
-    
-    function draw() {
-      if (!dataLoaded) return;
-      
-      // Slower fade for denser trails
-      background(0, 10);
-      
-      let radius = min(width, height) * 0.25;
-      
-      let steps = 1500;
-      
-      // Draw the connective web (divergence triangles)
-      strokeWeight(0.5);
-      for (let i = 0; i < steps; i += 3) { // Skip some steps for the web to look like distinct threads
-        let angle = map(i, 0, steps, 0, TWO_PI);
-        let shiftedAngle = (angle + offset) % TWO_PI;
-        if (shiftedAngle < 0) shiftedAngle += TWO_PI;
-        
-        // We use rates.length as the baseline timeline length
-        let exactIndex = map(shiftedAngle, 0, TWO_PI, 0, rates.length - 1);
-        exactIndex = constrain(exactIndex, 0, rates.length - 1);
-        
-        let idx1 = floor(exactIndex);
-        let idx2 = min(idx1 + 1, rates.length - 1);
-        let frac = exactIndex - idx1;
-        
-        // Safely get interpolated values for all three (using constrained indices for the others just in case lengths differ slightly)
-        let getVal = (arr) => {
-          let i1 = min(idx1, arr.length - 1);
-          let i2 = min(idx2, arr.length - 1);
-          return lerp(arr[i1], arr[i2], frac);
-        };
-        
-        let vRates = getVal(rates);
-        let vUnemp = getVal(unemp);
-        let vInf = getVal(inflation);
-        
-        let noiseVal = noise(cos(angle) * 1.5 + offset, sin(angle) * 1.5 + offset);
-        let nOffset = map(noiseVal, 0, 1, -30, 30);
-        
-        let rR = radius * 0.7 + map(vRates, -2, 20, -30, 120) * 1.2 + nOffset;
-        let rU = radius * 1.1 + map(vUnemp, -2, 20, -30, 120) * 1.8 + nOffset;
-        let rI = radius * 1.4 + map(vInf, -2, 20, -30, 120) * 0.9 + nOffset;
-        
-        let xR = width/2 + rR * cos(angle); let yR = height/2 + rR * sin(angle);
-        let xU = width/2 + rU * cos(angle); let yU = height/2 + rU * sin(angle);
-        let xI = width/2 + rI * cos(angle); let yI = height/2 + rI * sin(angle);
-        
-        // The connective tissue - opacity based on divergence
-        stroke(255, 255, 255, 12);
-        line(xR, yR, xU, yU);
-        line(xU, yU, xI, yI);
-        line(xI, yI, xR, yR);
-      }
-      
-      // Draw the main solid rings over the web
-      strokeWeight(1.5);
+
+    // --- Veilband: translucent quads between rings, SCREEN blend ---
+    // Opacity keyed to local divergence — divergent eras glow brighter.
+    blendMode(SCREEN);
+    noStroke();
+    for (let s = 0; s < SEGS; s++) {
+      let s2 = (s + 1) % SEGS;
+
+      // rates ↔ unemp
+      let d01 = (abs(rings[0][s].v - rings[1][s].v) + abs(rings[0][s2].v - rings[1][s2].v)) / 2;
+      let op01 = 8 + 32 * min(d01 / 14, 1);
+      fill(80, 130, 230, op01);
+      quad(rings[0][s].x, rings[0][s].y, rings[1][s].x, rings[1][s].y,
+           rings[1][s2].x, rings[1][s2].y, rings[0][s2].x, rings[0][s2].y);
+
+      // unemp ↔ inflation
+      let d12 = (abs(rings[1][s].v - rings[2][s].v) + abs(rings[1][s2].v - rings[2][s2].v)) / 2;
+      let op12 = 8 + 32 * min(d12 / 14, 1);
+      fill(255, 170, 90, op12);
+      quad(rings[1][s].x, rings[1][s].y, rings[2][s].x, rings[2][s].y,
+           rings[2][s2].x, rings[2][s2].y, rings[1][s2].x, rings[1][s2].y);
+    }
+
+    // --- Web lines connecting rings at each angle ---
+    // These thin lines build up through SCREEN blend into a luminous mesh.
+    for (let s = 0; s < SEGS; s++) {
+      let d01 = abs(rings[0][s].v - rings[1][s].v);
+      stroke(80, 140, 230, 8 + 35 * min(d01 / 14, 1));
+      strokeWeight(0.6);
+      line(rings[0][s].x, rings[0][s].y, rings[1][s].x, rings[1][s].y);
+
+      let d12 = abs(rings[1][s].v - rings[2][s].v);
+      stroke(255, 170, 90, 8 + 35 * min(d12 / 14, 1));
+      line(rings[1][s].x, rings[1][s].y, rings[2][s].x, rings[2][s].y);
+    }
+
+    // --- Three ring strokes, crisp on top ---
+    blendMode(BLEND);
+    for (let r = 0; r < 3; r++) {
+      stroke(cols[r][0], cols[r][1], cols[r][2], 120);
+      strokeWeight(1.2);
       noFill();
-      drawDataRing(rates, color(255, 80, 100, 200), radius * 0.7, 1.2);
-      drawDataRing(unemp, color(80, 180, 255, 200), radius * 1.1, 1.8);
-      drawDataRing(inflation, color(255, 200, 80, 200), radius * 1.4, 0.9);
-      
-      // Slow down the movement significantly
-      offset += 0.0005;
-    }
-    
-    // Helper to draw the solid outer lines
-    function drawDataRing(dataArr, c, baseRadius, ampMultiplier) {
-      stroke(c);
       beginShape();
-      let steps = 1500;
-      for (let i = 0; i < steps; i++) {
-        let angle = map(i, 0, steps, 0, TWO_PI);
-        let shiftedAngle = (angle + offset) % TWO_PI;
-        if (shiftedAngle < 0) shiftedAngle += TWO_PI;
-        
-        let exactIndex = map(shiftedAngle, 0, TWO_PI, 0, dataArr.length - 1);
-        exactIndex = constrain(exactIndex, 0, dataArr.length - 1);
-        
-        let idx1 = floor(exactIndex);
-        let idx2 = min(idx1 + 1, dataArr.length - 1);
-        let frac = exactIndex - idx1;
-        let val = lerp(dataArr[idx1], dataArr[idx2], frac);
-        
-        let r = baseRadius + map(val, -2, 20, -30, 120) * ampMultiplier;
-        let noiseVal = noise(cos(angle) * 1.5 + offset, sin(angle) * 1.5 + offset);
-        r += map(noiseVal, 0, 1, -30, 30);
-        
-        let x = width/2 + r * cos(angle);
-        let y = height/2 + r * sin(angle);
-        
-        if (i === 0) curveVertex(x, y);
-        curveVertex(x, y);
-        if (i === steps - 1) curveVertex(x, y);
+      for (let s = 0; s < SEGS; s++) {
+        if (s === 0) curveVertex(rings[r][s].x, rings[r][s].y);
+        curveVertex(rings[r][s].x, rings[r][s].y);
+        if (s === SEGS - 1) curveVertex(rings[r][s].x, rings[r][s].y);
       }
       endShape(CLOSE);
     }
-    
-    function windowResized() {
-      resizeCanvas(windowWidth, windowHeight);
-      background(0);
+
+    // --- Regime labels: small text at known economic events ---
+    blendMode(BLEND);
+    let regimes = [
+      { date: '1955-01', text: '1954' },
+      { date: '1973-10', text: 'Oil Crisis' },
+      { date: '1980-06', text: 'Volcker Shock' },
+      { date: '1995-01', text: 'Great Moderation' },
+      { date: '2008-09', text: 'GFC' },
+      { date: '2020-03', text: 'Pandemic' },
+    ];
+    let labelR = R * 1.55;
+    textAlign(CENTER, CENTER);
+    textSize(10);
+    noStroke();
+    for (let reg of regimes) {
+      let [yy, mm] = reg.date.split('-').map(Number);
+      let idx = constrain((yy - 1954) * 12 + (mm - 7), 0, rates.length - 1);
+      let angle = map(idx, 0, rates.length - 1, 0, TWO_PI) - timeOffset;
+      let lx = cx + cos(angle) * labelR;
+      let ly = cy + sin(angle) * labelR;
+
+      // Small dot at the outermost ring position
+      let dotR = bases[2] + map(inflation[constrain(idx, 0, inflation.length-1)] || 0, MAP_LO, MAP_HI, MAP_FROM, MAP_TO) * amps[2];
+      let dx = cx + cos(angle) * dotR;
+      let dy = cy + sin(angle) * dotR;
+      fill(255, 200, 80, 160);
+      circle(dx, dy, 3);
+
+      // Tangent-aligned text, flipped on the left half so it's always readable
+      push();
+      translate(lx, ly);
+      let rot = angle + HALF_PI;
+      if (sin(angle) > 0.01) rot += PI;
+      rotate(rot);
+      fill(190, 200, 220, 170);
+      text(reg.text, 0, 0);
+      pop();
     }
-  </script>
+
+    // --- Series labels: one per ring, anchored at the 1954 start position ---
+    let startAngle = ((-timeOffset % TWO_PI) + TWO_PI) % TWO_PI;
+    let seriesDefs = [
+      { text: 'Fed Funds',  ring: 0 },
+      { text: 'Unemployment', ring: 1 },
+      { text: 'Inflation',  ring: 2 },
+    ];
+    textSize(9);
+    for (let sd of seriesDefs) {
+      let rad = bases[sd.r] + 18;
+      let sx = cx + cos(startAngle) * rad;
+      let sy = cy + sin(startAngle) * rad;
+      push();
+      translate(sx, sy);
+      let rot = startAngle + HALF_PI;
+      if (sin(startAngle) > 0.01) rot += PI;
+      rotate(rot);
+      fill(cols[sd.r][0], cols[sd.r][1], cols[sd.r][2], 210);
+      text(sd.text, 0, 0);
+      pop();
+    }
+
+    // --- Glow at high-value peaks ---
+    // Points where the indicator is extreme get a soft luminous halo.
+    blendMode(SCREEN);
+    noStroke();
+    for (let r = 0; r < 3; r++) {
+      for (let s = 0; s < SEGS; s += 2) {
+        let mapped = map(rings[r][s].v, MAP_LO, MAP_HI, MAP_FROM, MAP_TO);
+        if (mapped > 55) {
+          let g = min((mapped - 55) / 65, 1);
+          fill(cols[r][0], cols[r][1], cols[r][2], 45 * g);
+          circle(rings[r][s].x, rings[r][s].y, 1.5 + 3.5 * g);
+        }
+      }
+    }
+
+    blendMode(BLEND);
+    timeOffset += 0.002;
+  }
+
+  function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+    background(0);
+  }
+</script>
 </body>
 </html>
