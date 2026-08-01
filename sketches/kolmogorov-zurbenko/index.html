@@ -27,15 +27,27 @@
 // so the price of every choice is visible: valid throws the boundary away
 // (the output simply stops), while linear/reflect/replicate keep the output
 // going and show what they guess lies outside. The bottom panel shows the
-// transfer function |B(w)|^k and, to its right, bars of how
-// much of a few test frequencies survive the filter. The (m,k) setting, the
-// edge strategy, and the signal scenario all cycle on their own; click or
-// press space to advance faster.
+// transfer function |B(w)|^k and, to its right, bars of how much of a few
+// test frequencies survive the filter. The (m,k) setting, the edge strategy,
+// and the signal scenario all cycle on their own; click or press space to
+// advance faster.
+//
+// Three "revenue" scenarios switch into forecast mode: a weekly revenue
+// series is differenced into different views (week-over-week,
+// month-over-month, same-week-last-year, month-over-month-last-year) to
+// strip away trend and seasonality before filtering. At the 'now' boundary
+// the filtered trend is extrapolated with the active edge strategy and the
+// recovered seasonal pattern is added back, projecting the next two years.
+// The realized out-of-sample series is then revealed and compared against
+// four methods live: KZ trend + seasonality, KZ trend only, naive last-value,
+// and naive same-week-last-year.
 
 // ------------------------------------------------------------------------
 // Constants & state
 // ------------------------------------------------------------------------
-const N = 420;                       // samples per signal
+const N = 420;                       // total samples (in-sample + forecast)
+const N_IN = 312;                    // in-sample weeks (6 full 52-week cycles)
+const F = N - N_IN;                  // forecast horizon (weeks)
 const CONDITIONS = [                 // KZ_{m,k}: m window length, k passes
   { m: 13, k: 1  },
   { m: 13, k: 4  },
@@ -43,13 +55,17 @@ const CONDITIONS = [                 // KZ_{m,k}: m window length, k passes
 ];
 const STRATEGIES = [
   { id: 'valid',     label: 'valid',
-    caption: 'throws the edges away — the smoothed line simply stops' },
+    caption: 'throws the edges away — the smoothed line simply stops',
+    fcCaption: 'no extrapolation — the projection stops at the boundary' },
   { id: 'linear',    label: 'linear extrap',
-    caption: 'guesses the trend continues past the edge' },
+    caption: 'guesses the trend continues past the edge',
+    fcCaption: 'extends the filtered trend at its last slope, adds seasonality' },
   { id: 'reflect',   label: 'reflect',
-    caption: 'mirrors the signal at the boundary' },
+    caption: 'mirrors the signal at the boundary',
+    fcCaption: 'mirrors the filtered trend, adds seasonality' },
   { id: 'replicate', label: 'replicate',
-    caption: 'holds the edge value flat beyond the record' },
+    caption: 'holds the edge value flat beyond the record',
+    fcCaption: 'holds the filtered trend flat, adds seasonality' },
 ];
 const STRAT_COLOR = {
   valid:     '#ff5f7d',
@@ -57,6 +73,7 @@ const STRAT_COLOR = {
   reflect:   '#7aa7ff',
   replicate: '#ffb86c',
 };
+const BASE_COL = { noChange: '#d95f43', seasNaive: '#4fd0e8' };
 const COND_COLOR = ['#59c2ff', '#ff9d5c', '#7ce08a'];
 
 const SCENARIOS = [
@@ -90,19 +107,65 @@ const SCENARIOS = [
     jumps: [], spikes: 0, spikeAmp: 0,
   },
 ];
+
+// Weekly revenue subsegments. A 52-week year: seasonal harmonics plus a
+// holiday bump, a slowly growing trend with occasional level shifts, and
+// unpredictable promotion spikes (part of the noise, not the forecast).
+const FC_SCENARIOS = [
+  { label: 'revenue · subscriptions', fc: true,
+    base: 90, growth: 1.1, sigma: 1.6, s1: 2.2, s2: 0.7,
+    holStart: 48, holLen: 3, holiday: 3.0,
+    shifts: [{ at: 120, amp: 26 }, { at: 210, amp: -14 }],
+    spikes: 4, spikeAmp: 3.5 },
+  { label: 'revenue · services', fc: true,
+    base: 70, growth: 0.55, sigma: 1.3, s1: 4.0, s2: 1.2,
+    holStart: 48, holLen: 3, holiday: 7.0,
+    shifts: [{ at: 150, amp: 18 }],
+    spikes: 6, spikeAmp: 2.6 },
+  { label: 'revenue · hardware', fc: true,
+    base: 120, growth: 0.25, sigma: 2.4, s1: 9.0, s2: 3.5,
+    holStart: 46, holLen: 4, holiday: 22,
+    shifts: [{ at: 90, amp: -30 }, { at: 230, amp: 34 }],
+    spikes: 8, spikeAmp: 5.0 },
+];
+const ALL_SCENARIOS = SCENARIOS.concat(FC_SCENARIOS);
+
+// Ways of looking at the series before filtering. The lag is how many
+// leading weeks are undefined (the warm-up) for a given differencing.
+const VIEWS = [
+  { id: 'level',  label: 'level',                  lag: 0,
+    cap: 'raw weekly revenue — the filter must handle trend plus strong seasonality' },
+  { id: 'wow',    label: 'week-over-week',         lag: 1,
+    cap: 'change vs last week — kills slow drift, keeps the annual cycle' },
+  { id: 'mom',    label: 'month-over-month',       lag: 4,
+    cap: 'change vs ~4 weeks ago — still carries annual seasonality' },
+  { id: 'yoy',    label: 'same week last year',    lag: 52,
+    cap: 'change vs the same week a year ago — the annual cycle is differenced away' },
+  { id: 'momyoy', label: 'month-over-month last year', lag: 56,
+    cap: '4-week change vs the same window a year ago — seasonality fully removed' },
+  { id: 'decompose', label: 'trend + seasonality', lag: 0,
+    cap: 'the level is split into trend (KZ of the level), seasonal (phase profile of the detrended), and irregular — the two smooth parts stitch back to the underlying signal' },
+];
+
 const STRATEGY_MS = 20000;
 const SCENARIO_MS = 60000;
 const SWEEP_MS = 22000;
+const FC_SWEEP_MS = 20000;          // forecast sweep: past, then reveal, then hold
+const FC_HOLD_MS = 9000;
+const VIEW_MS = 32000;              // one full sweep + hold per view
+const FC_STRATEGY_MS = 36000;
 
 const TAU = Math.PI * 2;
 
 let truth = [], signal = [], vMax = 1;
 let scenLabel = '', scenKind = 0;
+let forecastMode = false, viewIdx = 0;
 let condIdx = 0, stratIdx = 0;
-let nextStratAt = 0, nextScenarioAt = 0, sweepT0 = 0;
+let nextStratAt = 0, nextScenarioAt = 0, nextViewAt = 0, sweepT0 = 0;
 let results = [];                  // [cond][strat] = { y, offset }
 let kernels = [];                  // effective window per condition
 let pg = null;                     // offscreen static render
+let fcData = null;                 // last forecast computation (for tests)
 const geom = {};
 
 function gauss() {
@@ -126,11 +189,12 @@ function hsv2rgb(h, s, v) {
 }
 
 // ------------------------------------------------------------------------
-// Synthetic signals — one of four scenarios, regenerated on each load and
-// on each automatic cycle.
+// Synthetic signals — four filter-explorer scenarios, then three revenue
+// segments, regenerated on each load and on each automatic cycle.
 // ------------------------------------------------------------------------
 function makeSignal(kind) {
-  const S = SCENARIOS[kind];
+  const S = ALL_SCENARIOS[kind];
+  if (S.fc) return makeFcSignal(S);
   const p1 = Math.random() * TAU, p2 = Math.random() * TAU, p3 = Math.random() * TAU;
   const outPos = new Set();
   while (outPos.size < S.spikes) outPos.add(Math.floor(Math.random() * N));
@@ -147,6 +211,49 @@ function makeSignal(kind) {
     s.push(v + n);
   }
   return { truth: t, signal: s, label: S.label };
+}
+
+function makeFcSignal(S) {
+  const P = 52;
+  const ph1 = Math.random() * TAU, ph2 = Math.random() * TAU;
+  const outPos = new Set();
+  while (outPos.size < S.spikes) outPos.add(Math.floor(Math.random() * N));
+  const t = [], s = [];
+  for (let i = 0; i < N; i++) {
+    let trend = S.base + S.growth * i;
+    for (const sh of S.shifts) if (i > sh.at) trend += sh.amp;
+    let seas = S.s1 * Math.sin(TAU * i / P + ph1)
+             + S.s2 * Math.sin(2 * TAU * i / P + ph2);
+    const w = i % P;
+    if (w >= S.holStart && w < S.holStart + S.holLen) seas += S.holiday;
+    const tv = trend + seas;
+    t.push(tv);
+    let n = S.sigma * gauss();
+    if (outPos.has(i)) n += (Math.random() < 0.5 ? -1 : 1) * S.spikeAmp * (0.8 + Math.random() * 0.4);
+    s.push(tv + n);
+  }
+  return { truth: t, signal: s, label: S.label };
+}
+
+// ------------------------------------------------------------------------
+// View transforms — constant extension before the record so each difference
+// is well defined (and zero) during its warm-up.
+// ------------------------------------------------------------------------
+function atExt(x, i) {
+  return x[Math.max(0, Math.min(x.length - 1, i))];
+}
+
+function applyView(x, V) {
+  const out = new Array(x.length);
+  for (let i = 0; i < x.length; i++) {
+    const v = atExt(x, i);
+    if (V.id === 'level' || V.id === 'decompose') out[i] = v;
+    else if (V.id === 'wow') out[i] = v - atExt(x, i - 1);
+    else if (V.id === 'mom') out[i] = v - atExt(x, i - 4);
+    else if (V.id === 'yoy') out[i] = v - atExt(x, i - 52);
+    else out[i] = (v - atExt(x, i - 4)) - (atExt(x, i - 52) - atExt(x, i - 56));
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------------
@@ -269,48 +376,10 @@ function sy(v) {
 }
 
 // ------------------------------------------------------------------------
-// Static render: everything that only changes on resize, scenario change,
-// or (m,k) change. The frequency panel lives here.
+// Frequency panel — shared by both modes, drawn into the given graphics.
 // ------------------------------------------------------------------------
-function renderStatic() {
-  pg = createGraphics(geom.W, geom.H);
-  const c = pg, g = geom;
-  c.background(0);
-  c.noStroke();
-
-  // Main plot background.
-  c.fill(10, 10, 12);
-  c.rect(g.left, g.plotTop, g.W - g.left - g.right, g.plotH);
-
-  // Midline.
-  c.stroke(255, 255, 255, 14);
-  c.strokeWeight(1);
-  c.line(g.left + g.xIn, sy(0), g.W - g.right - g.xIn, sy(0));
-
-  // Record boundaries.
-  c.stroke(255, 255, 255, 34);
-  c.line(sx(0), g.plotTop + 2, sx(0), g.plotBot - 2);
-  c.line(sx(N - 1), g.plotTop + 2, sx(N - 1), g.plotBot - 2);
-
-  // Noisy input: faint line plus a fine grain of points.
-  c.noStroke();
-  c.fill(120, 120, 132, 46);
-  for (let i = 0; i < N; i++) c.rect(sx(i) - 0.6, sy(signal[i]) - 0.6, 1.2, 1.2);
-  c.stroke(110, 110, 122, 90);
-  c.strokeWeight(1);
-  c.noFill();
-  c.beginShape();
-  for (let i = 0; i < N; i++) c.vertex(sx(i), sy(signal[i]));
-  c.endShape();
-
-  // True signal (dashed), so the recovery is easy to judge.
-  c.stroke(255, 255, 255, 110);
-  c.strokeWeight(1);
-  for (let i = 0; i < N - 4; i += 4) {
-    c.line(sx(i), sy(truth[i]), sx(i + 2), sy(truth[i + 2]));
-  }
-
-  // ---- Frequency panel ----
+function renderFreqPanel(c) {
+  const g = geom;
   const fTop = g.freqTop, fH = g.freqH;
   c.noStroke();
   c.fill(10, 10, 12);
@@ -328,7 +397,6 @@ function renderStatic() {
   const cx0 = fx0, cx1 = fx0 + cw;
   const { m, k } = CONDITIONS[condIdx];
 
-  // dB grid.
   c.stroke(30);
   c.strokeWeight(1);
   for (const db of [-20, -40]) {
@@ -342,7 +410,6 @@ function renderStatic() {
   c.text('-20', cx0 - 3, fy1 - (20 / 60) * (fy1 - fy0) - 4);
   c.text('-40', cx0 - 3, fy1 - (40 / 60) * (fy1 - fy0) - 4);
 
-  // Transfer curve.
   c.stroke(COND_COLOR[condIdx]);
   c.strokeWeight(1.7);
   c.noFill();
@@ -354,7 +421,6 @@ function renderStatic() {
   }
   c.endShape();
 
-  // Bars: how much of a few test frequencies survives the filter.
   const barZoneX = cx1 + 24;
   const barMax = 34;
   const fyBase = fy1 - 2;
@@ -387,28 +453,305 @@ function renderStatic() {
 }
 
 // ------------------------------------------------------------------------
-// Scenario / condition / strategy progression
+// Forecast machinery — filter the view, recover its seasonal phase profile,
+// extrapolate the filtered trend, and project four methods ahead.
+// ------------------------------------------------------------------------
+function computeForecast() {
+  const { m, k } = CONDITIONS[condIdx];
+  const strat = STRATEGIES[stratIdx];
+  const sid = strat.id === 'valid' ? 'linear' : strat.id;
+  const V = VIEWS[viewIdx];
+  const P = 52;
+  const past = signal.slice(0, N_IN);
+  const view = applyView(past, V);
+  const truthV = applyView(truth, V);
+  const T = kzFilter(view, m, k, sid);
+  const hw = k * (m - 1) / 2;
+
+  const Sph = new Array(P).fill(0);
+  const vals = new Array(P);
+  for (let p = 0; p < P; p++) vals[p] = [];
+  for (let i = V.lag; i < N_IN; i++) {
+    if (i >= hw && i <= N_IN - 1 - hw) vals[i % P].push(view[i] - T[i]);
+  }
+  for (let p = 0; p < P; p++) {
+    const a = vals[p];
+    if (a.length) { a.sort((u, v) => u - v); Sph[p] = a[Math.floor(a.length / 2)]; }
+  }
+  let ss = 0, nn = 0;
+  for (let i = V.lag; i < N_IN; i++) {
+    if (i >= hw && i <= N_IN - 1 - hw) {
+      const r = view[i] - T[i] - Sph[i % P];
+      ss += r * r; nn++;
+    }
+  }
+  const sigma = nn > 0 ? Math.sqrt(ss / nn) : 1;
+
+  const feat = [], tre = [], nc = [], sn = [];
+  for (let f = 0; f < F; f++) {
+    const ti = padValueAt(T, N_IN + f, sid);
+    const sp = Sph[(N_IN + f) % P];
+    feat.push(ti + sp);
+    tre.push(ti);
+    nc.push(view[N_IN - 1]);
+    sn.push(view[N_IN - P + (f % P)]);
+  }
+  const viewFut = applyView(signal, V);
+  let irregular = null;
+  if (V.id === 'decompose') {
+    irregular = new Array(N_IN);
+    for (let i = 0; i < N_IN; i++) irregular[i] = view[i] - T[i] - Sph[i % P];
+  }
+  return { V, sid, m, k, P, T, Sph, sigma, view, truthV, feat, tre, nc, sn, viewFut, irregular };
+}
+
+// Per-band scales for the decompose view: trend / seasonal / irregular.
+function bandMaxes(fc) {
+  const { view, T, Sph, irregular, P, feat, tre, sigma } = fc;
+  let tMax = 1, sMax = 1, iMax = 1;
+  for (let i = 0; i < N_IN; i++) {
+    tMax = Math.max(tMax, Math.abs(view[i]), Math.abs(T[i]));
+    sMax = Math.max(sMax, Math.abs(Sph[i % P]));
+    iMax = Math.max(iMax, Math.abs(irregular[i]));
+  }
+  for (let f = 0; f < F; f++) {
+    tMax = Math.max(tMax, Math.abs(feat[f]), Math.abs(tre[f]));
+    sMax = Math.max(sMax, Math.abs(Sph[(N_IN + f) % P]));
+  }
+  return { tMax: tMax * 1.1, sMax: sMax * 1.3, iMax: Math.max(iMax * 1.1, 2.2 * sigma) };
+}
+
+function bandY(off, v, scale) {
+  const g = geom, bh = (g.plotBot - g.plotTop) / 3;
+  const y0 = g.plotTop + off + 5, y1 = g.plotTop + off + bh - 5;
+  const cy = (y0 + y1) / 2;
+  return cy - (v / scale) * ((y1 - y0) / 2);
+}
+
+// ------------------------------------------------------------------------
+// Static render: everything that only changes on resize, scenario change,
+// view change, or (m,k) change.
+// ------------------------------------------------------------------------
+function renderStatic() {
+  pg = createGraphics(geom.W, geom.H);
+  const c = pg, g = geom;
+  c.background(0);
+  c.noStroke();
+
+  if (forecastMode) {
+    const fc = computeForecast();
+    fcData = fc;
+    const strat = STRATEGIES[stratIdx];
+    if (fc.V.id === 'decompose') {
+      renderStaticDecompose(fc, c, rgb(STRAT_COLOR[strat.id]));
+    } else {
+      vMax = 1;
+      for (let i = fc.V.lag; i < N_IN; i++) {
+        vMax = Math.max(vMax, Math.abs(fc.view[i]), Math.abs(fc.truthV[i]));
+      }
+      for (let f = 0; f < F; f++) {
+        vMax = Math.max(vMax, Math.abs(fc.feat[f]), Math.abs(fc.tre[f]),
+                        Math.abs(fc.nc[f]), Math.abs(fc.sn[f]));
+      }
+      for (let i = N_IN; i < N; i++) vMax = Math.max(vMax, Math.abs(fc.viewFut[i]));
+      vMax *= 1.08;
+
+      c.fill(10, 10, 12);
+      c.rect(g.left, g.plotTop, g.W - g.left - g.right, g.plotH);
+
+      c.stroke(255, 255, 255, 14);
+      c.strokeWeight(1);
+      c.line(g.left + g.xIn, sy(0), g.W - g.right - g.xIn, sy(0));
+
+      c.stroke(255, 255, 255, 34);
+      c.line(sx(0), g.plotTop + 2, sx(0), g.plotBot - 2);
+      c.line(sx(N - 1), g.plotTop + 2, sx(N - 1), g.plotBot - 2);
+
+      // Warm-up region — the difference is undefined (held constant) there.
+      if (fc.V.lag > 0) {
+        c.fill(0, 0, 0, 130);
+        c.rect(sx(0), g.plotTop + 1, sx(fc.V.lag) - sx(0), g.plotH - 2);
+        c.fill(90);
+        c.textSize(9);
+        c.textAlign(LEFT, TOP);
+        c.text('warm-up', sx(0) + 4, g.plotBot - 13);
+      }
+
+      // Out-of-sample zone and the "now" boundary.
+      c.noStroke();
+      c.fill(255, 255, 255, 5);
+      c.rect(sx(N_IN), g.plotTop + 1, sx(N - 1) - sx(N_IN), g.plotH - 2);
+      c.stroke(255, 255, 255, 120);
+      c.strokeWeight(1.4);
+      c.line(sx(N_IN), g.plotTop + 2, sx(N_IN), g.plotBot - 2);
+      c.noStroke();
+      c.fill(200);
+      c.textSize(10);
+      c.textAlign(RIGHT, TOP);
+      c.text('now', sx(N_IN) - 5, g.plotTop + 4);
+      c.textAlign(LEFT, TOP);
+      c.text('out of sample →', sx(N_IN) + 6, g.plotTop + 4);
+
+      // View series (raw) plus its noiseless truth, in-sample only.
+      c.noStroke();
+      c.fill(120, 120, 132, 46);
+      for (let i = fc.V.lag; i < N_IN; i++) c.rect(sx(i) - 0.6, sy(fc.view[i]) - 0.6, 1.2, 1.2);
+      c.stroke(110, 110, 122, 90);
+      c.strokeWeight(1);
+      c.noFill();
+      c.beginShape();
+      for (let i = fc.V.lag; i < N_IN; i++) c.vertex(sx(i), sy(fc.view[i]));
+      c.endShape();
+      c.stroke(255, 255, 255, 110);
+      c.strokeWeight(1);
+      for (let i = fc.V.lag; i < N_IN - 4; i += 4) {
+        c.line(sx(i), sy(fc.truthV[i]), sx(i + 2), sy(fc.truthV[i + 2]));
+      }
+    }
+  } else {
+    c.fill(10, 10, 12);
+    c.rect(g.left, g.plotTop, g.W - g.left - g.right, g.plotH);
+
+    c.stroke(255, 255, 255, 14);
+    c.strokeWeight(1);
+    c.line(g.left + g.xIn, sy(0), g.W - g.right - g.xIn, sy(0));
+
+    c.stroke(255, 255, 255, 34);
+    c.line(sx(0), g.plotTop + 2, sx(0), g.plotBot - 2);
+    c.line(sx(N - 1), g.plotTop + 2, sx(N - 1), g.plotBot - 2);
+
+    c.noStroke();
+    c.fill(120, 120, 132, 46);
+    for (let i = 0; i < N; i++) c.rect(sx(i) - 0.6, sy(signal[i]) - 0.6, 1.2, 1.2);
+    c.stroke(110, 110, 122, 90);
+    c.strokeWeight(1);
+    c.noFill();
+    c.beginShape();
+    for (let i = 0; i < N; i++) c.vertex(sx(i), sy(signal[i]));
+    c.endShape();
+
+    c.stroke(255, 255, 255, 110);
+    c.strokeWeight(1);
+    for (let i = 0; i < N - 4; i += 4) {
+      c.line(sx(i), sy(truth[i]), sx(i + 2), sy(truth[i + 2]));
+    }
+  }
+
+  renderFreqPanel(c);
+}
+
+// Decompose view: three stacked bands (trend / seasonal / irregular). The
+// trend and seasonal bands stitch back together to reproduce the underlying
+// signal; the irregular band holds everything unforecastable.
+function renderStaticDecompose(fc, c, sc) {
+  const g = geom;
+  const { view, T, Sph, irregular, P, truthV } = fc;
+  const vm = bandMaxes(fc);
+  const bh = (g.plotBot - g.plotTop) / 3;
+
+  c.fill(10, 10, 12);
+  c.rect(g.left, g.plotTop, g.W - g.left - g.right, g.plotH);
+
+  c.stroke(255, 255, 255, 18);
+  c.strokeWeight(1);
+  c.line(g.left + g.xIn, g.plotTop + bh, g.W - g.right - g.xIn, g.plotTop + bh);
+  c.line(g.left + g.xIn, g.plotTop + 2 * bh, g.W - g.right - g.xIn, g.plotTop + 2 * bh);
+
+  c.stroke(255, 255, 255, 34);
+  c.line(sx(0), g.plotTop + 2, sx(0), g.plotBot - 2);
+  c.line(sx(N - 1), g.plotTop + 2, sx(N - 1), g.plotBot - 2);
+
+  c.noStroke();
+  c.fill(255, 255, 255, 5);
+  c.rect(sx(N_IN), g.plotTop + 1, sx(N - 1) - sx(N_IN), g.plotH - 2);
+  c.stroke(255, 255, 255, 120);
+  c.strokeWeight(1.4);
+  c.line(sx(N_IN), g.plotTop + 2, sx(N_IN), g.plotBot - 2);
+  c.noStroke();
+  c.fill(200);
+  c.textSize(10);
+  c.textAlign(RIGHT, TOP);
+  c.text('now', sx(N_IN) - 5, g.plotTop + 4);
+  c.textAlign(LEFT, TOP);
+  c.text('out of sample →', sx(N_IN) + 6, g.plotTop + 4);
+
+  // Band 1: raw level, dashed truth, and the KZ trend.
+  c.noStroke();
+  c.fill(120, 120, 132, 46);
+  for (let i = 0; i < N_IN; i++) c.rect(sx(i) - 0.6, bandY(0, view[i], vm.tMax) - 0.6, 1.2, 1.2);
+  c.stroke(255, 255, 255, 70);
+  c.strokeWeight(1);
+  for (let i = 0; i < N_IN - 4; i += 4) {
+    c.line(sx(i), bandY(0, truthV[i], vm.tMax), sx(i + 2), bandY(0, truthV[i + 2], vm.tMax));
+  }
+  c.stroke(sc[0], sc[1], sc[2], 235);
+  c.strokeWeight(1.6);
+  c.noFill();
+  c.beginShape();
+  for (let i = 0; i < N_IN; i++) c.vertex(sx(i), bandY(0, T[i], vm.tMax));
+  c.endShape();
+
+  // Band 2: the seasonal phase profile.
+  c.stroke(124, 224, 138, 210);
+  c.strokeWeight(1.4);
+  c.beginShape();
+  for (let i = 0; i < N_IN; i++) c.vertex(sx(i), bandY(bh, Sph[i % P], vm.sMax));
+  c.endShape();
+
+  // Band 3: the irregular remainder.
+  c.stroke(255, 255, 255, 40);
+  c.strokeWeight(1);
+  c.line(g.left + g.xIn, bandY(2 * bh, 0, vm.iMax), g.W - g.right - g.xIn, bandY(2 * bh, 0, vm.iMax));
+  c.noStroke();
+  c.fill(150, 150, 158, 90);
+  for (let i = 0; i < N_IN; i++) c.rect(sx(i) - 0.6, bandY(2 * bh, irregular[i], vm.iMax) - 0.6, 1.2, 1.2);
+
+  c.textAlign(LEFT, BOTTOM);
+  c.textSize(9);
+  c.fill(140);
+  c.text('trend', g.left + 3, g.plotTop + bh - 3);
+  c.fill(124, 224, 138, 160);
+  c.text('seasonal', g.left + 3, g.plotTop + 2 * bh - 3);
+  c.fill(140);
+  c.text('irregular', g.left + 3, g.plotBot - 3);
+}
+
+// ------------------------------------------------------------------------
+// Scenario / condition / strategy / view progression
 // ------------------------------------------------------------------------
 function loadScenario() {
   const s = makeSignal(scenKind);
   truth = s.truth;
   signal = s.signal;
   scenLabel = s.label;
+  forecastMode = !!ALL_SCENARIOS[scenKind].fc;
   vMax = 1;
   for (const v of truth) vMax = Math.max(vMax, Math.abs(v));
   for (const v of signal) vMax = Math.max(vMax, Math.abs(v));
   vMax *= 1.08;
-  results = CONDITIONS.map((c) =>
-    STRATEGIES.map((str) => {
-      const y = kzFilter(signal, c.m, c.k, str.id);
-      return { y, offset: str.id === 'valid' ? c.k * (c.m - 1) / 2 : 0 };
-    })
-  );
+  if (forecastMode) {
+    results = [];
+  } else {
+    results = CONDITIONS.map((c) =>
+      STRATEGIES.map((str) => {
+        const y = kzFilter(signal, c.m, c.k, str.id);
+        return { y, offset: str.id === 'valid' ? c.k * (c.m - 1) / 2 : 0 };
+      })
+    );
+  }
   kernels = CONDITIONS.map(c => kernelWeights(c.m, c.k));
 }
 
 function advanceStrategy() {
-  stratIdx = (stratIdx + 1) % STRATEGIES.length;
+  do { stratIdx = (stratIdx + 1) % STRATEGIES.length; }
+  while (forecastMode && STRATEGIES[stratIdx].id === 'valid');
+  if (forecastMode) renderStatic();
+  sweepT0 = millis();
+}
+
+function advanceView() {
+  viewIdx = (viewIdx + 1) % VIEWS.length;
+  renderStatic();
   sweepT0 = millis();
 }
 
@@ -419,8 +762,12 @@ function advanceCondition() {
 }
 
 function advanceScenario() {
-  scenKind = (scenKind + 1) % SCENARIOS.length;
+  scenKind = (scenKind + 1) % ALL_SCENARIOS.length;
   loadScenario();
+  if (forecastMode && STRATEGIES[stratIdx].id === 'valid') advanceStrategy();
+  nextStratAt = millis() + (forecastMode ? FC_STRATEGY_MS : STRATEGY_MS);
+  nextViewAt = millis() + VIEW_MS;
+  sweepT0 = millis();
   renderStatic();
 }
 
@@ -429,6 +776,7 @@ function setup() {
   createCanvas(1, 1);
   nextStratAt = millis() + STRATEGY_MS;
   nextScenarioAt = millis() + SCENARIO_MS;
+  nextViewAt = millis() + VIEW_MS;
   sweepT0 = millis();
   loadScenario();
   computeGeom();
@@ -448,14 +796,22 @@ function keyPressed() {
 }
 
 // ------------------------------------------------------------------------
-// Frame loop — the animated layer.
+// Frame loop — the animated layer. Explorer mode keeps the old behavior;
+// forecast mode draws the projections and reveals the out-of-sample series.
 // ------------------------------------------------------------------------
 function draw() {
+  if (forecastMode) {
+    if (millis() > nextStratAt) { nextStratAt = millis() + FC_STRATEGY_MS; advanceStrategy(); }
+    if (millis() > nextViewAt) { nextViewAt = millis() + VIEW_MS; advanceView(); }
+  } else {
+    if (millis() > nextStratAt) { nextStratAt = millis() + STRATEGY_MS; advanceStrategy(); }
+  }
+  if (millis() > nextScenarioAt) { nextScenarioAt = millis() + SCENARIO_MS; advanceScenario(); }
+
+  if (forecastMode) { forecastDraw(); return; }
+
   const g = geom;
   image(pg, 0, 0);
-
-  if (millis() > nextStratAt) { nextStratAt = millis() + STRATEGY_MS; advanceStrategy(); }
-  if (millis() > nextScenarioAt) { nextScenarioAt = millis() + SCENARIO_MS; advanceScenario(); }
 
   const { m, k } = CONDITIONS[condIdx];
   const strat = STRATEGIES[stratIdx];
@@ -463,18 +819,14 @@ function draw() {
   const yArr = res.y, off = res.offset;
   const hw = k * (m - 1) / 2;               // total window half-support
 
-  // Sweeping cursor position (sample index).
   const sw = (millis() - sweepT0) / SWEEP_MS;
   const ci = Math.floor((sw - Math.floor(sw)) * (N - 1));
 
-  // ---- Window support band + ghost padding at the record edges. ----
   if (strat.id !== 'valid') {
     noStroke();
     fill(255, 255, 255, 9);
     rect(sx(Math.max(0, ci - hw)), g.plotTop + 1,
          sx(Math.min(N - 1, ci + hw)) - sx(Math.max(0, ci - hw)), g.plotH - 2);
-    // Ghost: the padded continuation beyond the record, in the strategy
-    // color, drawn only where the window actually reaches over the edge.
     const sc = rgb(STRAT_COLOR[strat.id]);
     if (ci - hw < 0) {
       fill(sc[0], sc[1], sc[2], 18);
@@ -502,9 +854,6 @@ function draw() {
     }
   }
 
-  // ---- Progressive output trail: the smoothed line painted by the sweep.
-  // For 'valid' the trail exists only while the window is fully inside the
-  // record — it visibly stops short of the edges.
   let outIdx = -1;
   if (strat.id === 'valid') {
     if (ci >= off && ci <= N - 1 - off) outIdx = ci - off;
@@ -515,7 +864,6 @@ function draw() {
   if (outIdx >= 0 && outIdx < yArr.length) {
     const hue = (stratIdx * 0.17 + millis() * 0.000016) % 1;
     const col = hsv2rgb(hue, 0.82, 1);
-    // Glow passes, then the bright core.
     for (const [w, a] of [[6, 26], [3, 70], [1.6, 255]]) {
       stroke(col[0], col[1], col[2], a);
       strokeWeight(w);
@@ -526,7 +874,6 @@ function draw() {
       }
       endShape();
     }
-    // Cursor dot with halo.
     const dx = sx(ci), dy = sy(yArr[outIdx]);
     noStroke();
     fill(255, 255, 255, 40);
@@ -535,7 +882,6 @@ function draw() {
     ellipse(dx, dy, 5, 5);
   }
 
-  // ---- Readable labels. ----
   textFont('Helvetica, Arial, sans-serif');
   textSize(17);
   textAlign(LEFT, TOP);
@@ -563,7 +909,171 @@ function draw() {
   text('click: next edge strategy   ·   space: next (m,k)', g.W - 12, g.titleTop);
 }
 
-function windowResized2() {}
+function oosErr(a, fEnd) {
+  if (fEnd < 0) return null;
+  let s = 0;
+  for (let f = 0; f <= fEnd; f++) {
+    const d = a[f] - fcData.viewFut[N_IN + f];
+    s += d * d;
+  }
+  return Math.sqrt(s / (fEnd + 1));
+}
+
+function forecastDraw() {
+  const g = geom;
+  image(pg, 0, 0);
+  const fc = computeForecast();
+  fcData = fc;
+
+  const strat = STRATEGIES[stratIdx];
+  const V = fc.V;
+  const sc = rgb(STRAT_COLOR[strat.id]);
+  const dim = [sc[0] * 0.45 + 45, sc[1] * 0.45 + 45, sc[2] * 0.45 + 45];
+  const xs = [];
+  for (let f = 0; f < F; f++) xs.push(sx(N_IN + f));
+
+  let t = millis() - sweepT0;
+  if (t >= FC_SWEEP_MS + FC_HOLD_MS) { sweepT0 = millis(); t = 0; }
+  const ci = t < FC_SWEEP_MS ? Math.floor(t / FC_SWEEP_MS * (N - 1)) : N - 1;
+  const fRev = ci - N_IN;
+
+  // In-sample window band, then the progressive filtered trail.
+  if (ci < N_IN) {
+    noStroke();
+    fill(255, 255, 255, 7);
+    const hw = fc.m * fc.k - 1;              // rough support for the band
+    rect(sx(Math.max(0, ci - hw)), g.plotTop + 1,
+         sx(Math.min(N_IN - 1, ci + hw)) - sx(Math.max(0, ci - hw)), g.plotH - 2);
+  }
+  const outIdx = Math.min(ci, N_IN - 1);
+  for (const [w, a] of [[6, 26], [3, 70], [1.6, 255]]) {
+    stroke(sc[0], sc[1], sc[2], a);
+    strokeWeight(w);
+    noFill();
+    beginShape();
+    for (let j = 0; j <= outIdx; j++) vertex(sx(j), sy(fc.T[j]));
+    endShape();
+  }
+
+  // Projections, full horizon, dotted. A faint band marks the residual noise
+  // width around the featured method.
+  stroke(sc[0], sc[1], sc[2], 38);
+  strokeWeight(0.9);
+  for (const sgn of [1, -1]) {
+    noFill();
+    beginShape();
+    for (let f = 0; f < F; f++) vertex(xs[f], sy(fc.feat[f] + sgn * 1.5 * fc.sigma));
+    endShape();
+  }
+  const methods = [
+    { ys: fc.feat, col: sc,                    a: 235, w: 1.8 },
+    { ys: fc.tre,  col: dim,                   a: 150, w: 1.2 },
+    { ys: fc.nc,   col: rgb(BASE_COL.noChange), a: 180, w: 1.2 },
+    { ys: fc.sn,   col: rgb(BASE_COL.seasNaive), a: 180, w: 1.2 },
+  ];
+  for (const mm of methods) {
+    stroke(mm.col[0], mm.col[1], mm.col[2], mm.a);
+    strokeWeight(mm.w);
+    noFill();
+    for (let f = 0; f < F - 2; f += 3) {
+      line(xs[f], sy(mm.ys[f]), xs[Math.min(f + 2, F - 1)], sy(mm.ys[Math.min(f + 2, F - 1)]));
+    }
+  }
+
+  // Revealed out-of-sample series, with the featured error filled beneath it.
+  if (fRev >= 0) {
+    noStroke();
+    fill(sc[0], sc[1], sc[2], 22);
+    beginShape();
+    vertex(sx(N_IN), sy(fc.feat[0]));
+    for (let f = 0; f <= fRev; f++) vertex(xs[f], sy(fc.feat[f]));
+    for (let f = fRev; f >= 0; f--) vertex(xs[f], sy(fc.viewFut[N_IN + f]));
+    endShape(CLOSE);
+    stroke(255, 255, 255, 190);
+    strokeWeight(1.3);
+    noFill();
+    beginShape();
+    for (let f = 0; f <= fRev; f++) vertex(xs[f], sy(fc.viewFut[N_IN + f]));
+    endShape();
+    noStroke();
+    fill(255);
+    for (let f = 0; f <= fRev; f++) rect(xs[f] - 0.8, sy(fc.viewFut[N_IN + f]) - 0.8, 1.6, 1.6);
+  }
+
+  // Cursor at the sweep frontier.
+  const dx = ci < N_IN ? sx(ci) : (fRev >= 0 ? xs[fRev] : sx(N_IN));
+  const dy = ci < N_IN ? sy(fc.T[ci]) : (fRev >= 0 ? sy(fc.viewFut[N_IN + fRev]) : sy(fc.feat[0]));
+  noStroke();
+  fill(255, 255, 255, 40);
+  ellipse(dx, dy, 14, 14);
+  fill(255);
+  ellipse(dx, dy, 5, 5);
+
+  // Out-of-sample error table (best so far highlighted).
+  const errs = [fc.feat, fc.tre, fc.nc, fc.sn].map(a => oosErr(a, fRev));
+  let bestR = -1, bestIdx = 0;
+  for (let r = 0; r < 4; r++) {
+    if (errs[r] !== null && (bestR < 0 || errs[r] < bestR)) { bestR = errs[r]; bestIdx = r; }
+  }
+  const lx = g.W - g.right - g.xIn - 208;
+  const ly = g.plotTop + 6;
+  noStroke();
+  fill(0, 0, 0, 150);
+  rect(lx, ly, 202, 75);
+  textSize(9);
+  textAlign(LEFT, TOP);
+  fill(120);
+  text('out-of-sample error (rmse)', lx + 6, ly + 3);
+  const rowNames = ['KZ trend + seasonal', 'KZ trend only', 'naive last value', 'naive same wk last yr'];
+  const rowCols = [sc, dim, rgb(BASE_COL.noChange), rgb(BASE_COL.seasNaive)];
+  for (let r = 0; r < 4; r++) {
+    const yy = ly + 17 + r * 14.5;
+    fill(rowCols[r][0], rowCols[r][1], rowCols[r][2], 200);
+    rect(lx + 6, yy + 2, 6, 6);
+    fill(200);
+    text(rowNames[r], lx + 16, yy);
+    if (errs[r] === null) {
+      fill(90);
+      text('—', lx + 150, yy);
+    } else {
+      fill(r === bestIdx ? '#7ce08a' : 190);
+      text(errs[r].toFixed(2), lx + 150, yy);
+    }
+  }
+
+  // Readable labels.
+  textFont('Helvetica, Arial, sans-serif');
+  textSize(17);
+  textAlign(LEFT, TOP);
+  noStroke();
+  fill(230);
+  const lead = 'KZ revenue forecast  ·  m=' + fc.m + '  ·  k=' + fc.k
+             + '  ·  view: ' + V.label + '  ·  trend: ';
+  text(lead, 12, g.titleTop);
+  const lw = textWidth(lead);
+  fill(STRAT_COLOR[strat.id]);
+  text(strat.label, 12 + lw, g.titleTop);
+
+  textSize(12);
+  fill(170);
+  text(V.cap, 12, g.titleTop + 24);
+
+  textSize(11);
+  fill(120);
+  let oosTxt = '—';
+  if (fRev >= 0) {
+    const r1 = errs[0], r2 = errs[2];
+    oosTxt = 'featured ' + r1.toFixed(2) + ' vs naive ' + r2.toFixed(2)
+           + (r2 > 0 ? '  (' + ((r2 / r1 - 1) * 100).toFixed(0) + '%)' : '');
+  }
+  text('segment: ' + scenLabel + '  ·  horizon ' + F + ' wk  ·  OOS rmse: ' + oosTxt,
+       12, g.titleTop + 42);
+
+  textSize(10);
+  fill(80);
+  textAlign(RIGHT, TOP);
+  text('click: next trend extrapolation   ·   space: next (m,k)', g.W - 12, g.titleTop);
+}
 </script>
 </body>
 </html>

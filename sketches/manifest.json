@@ -46,6 +46,6 @@
     "id": "kolmogorov-zurbenko",
     "title": "Kolmogorov-Zurbenko Filter",
     "path": "sketches/kolmogorov-zurbenko/index.html",
-    "description": "K iterations of a centered moving average of length M (the Kolmogorov-Zurbenko low-pass). The same noisy signal is shown through three (M,k) settings and four edge strategies - dropping the edges, or preserving them by extrapolation, reflection, or replication - with each filter's frequency response and effective Gaussian-limit window below. Four scenarios rotate automatically; part one of a filter-explorer series."
+    "description": "K iterations of a centered moving average of length M (the Kolmogorov-Zurbenko low-pass). The same noisy signal is shown through three (M,k) settings and four edge strategies - dropping the edges, or preserving them by extrapolation, reflection, or replication - with each filter's frequency response and effective Gaussian-limit window below. Four noisy scenarios rotate; three weekly-revenue segments switch into forecast mode, where the series is differenced into six views (level, week-over-week, month-over-month, same-week-last-year, its month-over-month variant, and a three-band trend/seasonal/irregular decomposition) before filtering, and the extrapolated trend plus recovered seasonality is scored out-of-sample against two naive baselines."
   }
 ]
