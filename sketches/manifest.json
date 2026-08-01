@@ -41,5 +41,11 @@
     "title": "Spiral Mandala",
     "path": "sketches/spiral-mandala/index.html",
     "description": "A recursive concentric mandala: each ring of small circles nests a tighter ring inside it down to a pixel-sized core, while ADD blending builds bright seams where the rings overlap and a frame-cycled hue drifts the whole figure through the spectrum."
+  },
+  {
+    "id": "kolmogorov-zurbenko",
+    "title": "Kolmogorov-Zurbenko Filter",
+    "path": "sketches/kolmogorov-zurbenko/index.html",
+    "description": "K iterations of a centered moving average of length M (the Kolmogorov-Zurbenko low-pass). The same noisy signal is shown through three (M,k) settings and four edge strategies - dropping the edges, or preserving them by extrapolation, reflection, or replication - with each filter's frequency response and effective Gaussian-limit window below. Four scenarios rotate automatically; part one of a filter-explorer series."
   }
 ]

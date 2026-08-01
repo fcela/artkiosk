@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kolmogorov-Zurbenko Filter</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script>
+// Kolmogorov-Zurbenko filter, as a living piece. The KZ filter is k passes
+// of a moving average over a window of m samples; each pass reshapes the
+// window toward a Gaussian and deepens the stopband. One noisy signal is on
+// screen at a time. A window glides along it and paints a glowing smoothed
+// line behind it. When the window reaches the edge of the record, the
+// "padding" each strategy assumes is drawn beyond the boundary as a ghost,
+// so the price of every choice is visible: valid throws the boundary away
+// (the output simply stops), while linear/reflect/replicate keep the output
+// going and show what they guess lies outside. The bottom panel shows the
+// transfer function |B(w)|^k and, to its right, bars of how
+// much of a few test frequencies survive the filter. The (m,k) setting, the
+// edge strategy, and the signal scenario all cycle on their own; click or
+// press space to advance faster.
+
+// ------------------------------------------------------------------------
+// Constants & state
+// ------------------------------------------------------------------------
+const N = 420;                       // samples per signal
+const CONDITIONS = [                 // KZ_{m,k}: m window length, k passes
+  { m: 13, k: 1  },
+  { m: 13, k: 4  },
+  { m: 37, k: 4  },
+];
+const STRATEGIES = [
+  { id: 'valid',     label: 'valid',
+    caption: 'throws the edges away — the smoothed line simply stops' },
+  { id: 'linear',    label: 'linear extrap',
+    caption: 'guesses the trend continues past the edge' },
+  { id: 'reflect',   label: 'reflect',
+    caption: 'mirrors the signal at the boundary' },
+  { id: 'replicate', label: 'replicate',
+    caption: 'holds the edge value flat beyond the record' },
+];
+const STRAT_COLOR = {
+  valid:     '#ff5f7d',
+  linear:    '#35d0ba',
+  reflect:   '#7aa7ff',
+  replicate: '#ffb86c',
+};
+const COND_COLOR = ['#59c2ff', '#ff9d5c', '#7ce08a'];
+
+const SCENARIOS = [
+  {
+    label: 'smooth trend + seasonal',
+    a1: 2.1, f1: 1.7, a2: 1.0, f2: 4.3, a3: 0.45, f3: 9.7,
+    drift: 0, sigma: 0.75,
+    jumps: [{ at: 0.62, amp: 1.3 }], spikes: 5, spikeAmp: 3.0,
+  },
+  {
+    label: 'impulse-heavy',
+    a1: 2.0, f1: 1.7, a2: 0.9, f2: 4.3, a3: 0.4, f3: 9.7,
+    drift: 0, sigma: 0.30,
+    jumps: [], spikes: 16, spikeAmp: 4.0,
+  },
+  {
+    label: 'regime jumps',
+    a1: 2.0, f1: 1.7, a2: 0.9, f2: 4.3, a3: 0.4, f3: 9.7,
+    drift: 0, sigma: 0.55,
+    jumps: [
+      { at: 0.20, amp: 1.8 },
+      { at: 0.47, amp: -2.2 },
+      { at: 0.73, amp: 1.5 },
+    ],
+    spikes: 3, spikeAmp: 3.0,
+  },
+  {
+    label: 'drifting + heavy noise',
+    a1: 1.6, f1: 1.3, a2: 0.8, f2: 3.8, a3: 0.35, f3: 8.4,
+    drift: 3.2, sigma: 1.15,
+    jumps: [], spikes: 0, spikeAmp: 0,
+  },
+];
+const STRATEGY_MS = 20000;
+const SCENARIO_MS = 60000;
+const SWEEP_MS = 22000;
+
+const TAU = Math.PI * 2;
+
+let truth = [], signal = [], vMax = 1;
+let scenLabel = '', scenKind = 0;
+let condIdx = 0, stratIdx = 0;
+let nextStratAt = 0, nextScenarioAt = 0, sweepT0 = 0;
+let results = [];                  // [cond][strat] = { y, offset }
+let kernels = [];                  // effective window per condition
+let pg = null;                     // offscreen static render
+const geom = {};
+
+function gauss() {
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
+}
+
+function hsv2rgb(h, s, v) {
+  const i = Math.floor(h * 6), f = h * 6 - i;
+  const p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+  switch (i % 6) {
+    case 0: return [v * 255, t * 255, p * 255];
+    case 1: return [q * 255, v * 255, p * 255];
+    case 2: return [p * 255, v * 255, t * 255];
+    case 3: return [p * 255, q * 255, v * 255];
+    case 4: return [t * 255, p * 255, v * 255];
+    default: return [v * 255, p * 255, q * 255];
+  }
+}
+
+// ------------------------------------------------------------------------
+// Synthetic signals — one of four scenarios, regenerated on each load and
+// on each automatic cycle.
+// ------------------------------------------------------------------------
+function makeSignal(kind) {
+  const S = SCENARIOS[kind];
+  const p1 = Math.random() * TAU, p2 = Math.random() * TAU, p3 = Math.random() * TAU;
+  const outPos = new Set();
+  while (outPos.size < S.spikes) outPos.add(Math.floor(Math.random() * N));
+  const t = [], s = [];
+  for (let i = 0; i < N; i++) {
+    let v = S.a1 * Math.sin(TAU * i / N * S.f1 + p1)
+          + S.a2 * Math.sin(TAU * i / N * S.f2 + p2)
+          + S.a3 * Math.sin(TAU * i / N * S.f3 + p3)
+          + S.drift * (i / N);
+    for (const j of S.jumps) if (i > j.at * N) v += j.amp;
+    t.push(v);
+    let n = S.sigma * gauss();
+    if (outPos.has(i)) n += (Math.random() < 0.5 ? -1 : 1) * S.spikeAmp * (0.8 + Math.random() * 0.4);
+    s.push(v + n);
+  }
+  return { truth: t, signal: s, label: S.label };
+}
+
+// ------------------------------------------------------------------------
+// KZ filter: k passes of a centered moving average of window length m.
+// 'valid' drops the edges (each pass shortens by m-1); every other strategy
+// pads each pass and keeps full length.
+// ------------------------------------------------------------------------
+function padValueAt(x, idx, edge) {
+  const L = x.length;
+  if (idx >= 0 && idx < L) return x[idx];
+  if (edge === 'replicate') return idx < 0 ? x[0] : x[L - 1];
+  if (edge === 'reflect') return idx < 0 ? x[-idx - 1] : x[2 * L - 1 - idx];
+  if (edge === 'linear') {
+    if (idx < 0) return x[0] - (-idx) * (x[1] - x[0]);
+    return x[L - 1] + (idx - (L - 1)) * (x[L - 1] - x[L - 2]);
+  }
+  return 0;
+}
+
+function kzPassPadded(x, m, edge) {
+  const L = x.length, out = new Array(L);
+  const h = (m - 1) / 2;
+  for (let i = 0; i < L; i++) {
+    let s = 0;
+    for (let j = -h; j <= h; j++) s += padValueAt(x, i + j, edge);
+    out[i] = s / m;
+  }
+  return out;
+}
+
+function kzPassValid(x, m) {
+  const L = x.length, out = [];
+  const h = (m - 1) / 2;
+  for (let i = h; i < L - h; i++) {
+    let s = 0;
+    for (let j = -h; j <= h; j++) s += x[i + j];
+    out.push(s / m);
+  }
+  return out;
+}
+
+function kzFilter(x, m, k, edge) {
+  let y = x.slice();
+  if (edge === 'valid') {
+    for (let p = 0; p < k; p++) y = kzPassValid(y, m);
+    return y;
+  }
+  for (let p = 0; p < k; p++) y = kzPassPadded(y, m, edge);
+  return y;
+}
+
+// Effective window: boxcar of length m convolved with itself k times.
+// Support length is k(m-1)+1; the shape approaches a Gaussian as k grows.
+function kernelWeights(m, k) {
+  let w = new Array(m).fill(1);
+  for (let p = 1; p < k; p++) {
+    const nw = new Array(w.length + m - 1).fill(0);
+    for (let i = 0; i < w.length; i++)
+      for (let j = 0; j < m; j++) nw[i + j] += w[i];
+    w = nw;
+  }
+  let s = 0;
+  for (const v of w) s += v;
+  for (let i = 0; i < w.length; i++) w[i] /= s;
+  return w;
+}
+
+// |B(ω)|^k for the KZ transfer function (1/m)|sin(πmω)/sin(πω)|^k.
+function transferLin(f, m, k) {
+  const den = m * Math.sin(Math.PI * f);
+  if (Math.abs(den) < 1e-12) return 1;
+  return Math.pow(Math.abs(Math.sin(Math.PI * m * f) / den), k);
+}
+function transferDb(f, m, k) {
+  return 20 * Math.log10(transferLin(f, m, k));
+}
+
+function rmse(y, offset) {
+  let s = 0;
+  for (let i = 0; i < y.length; i++) {
+    const d = y[i] - truth[offset + i];
+    s += d * d;
+  }
+  return Math.sqrt(s / y.length);
+}
+
+function rgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// ------------------------------------------------------------------------
+// Layout & coordinate maps
+// ------------------------------------------------------------------------
+function computeGeom() {
+  geom.W = windowWidth;
+  geom.H = windowHeight;
+  geom.titleTop = 10; geom.titleH = 62;
+  geom.left = 70; geom.right = 18;
+  geom.freqH = 96; geom.freqGap = 10;
+  geom.freqTop = geom.H - geom.freqH - 6;
+  geom.plotTop = geom.titleTop + geom.titleH + 6;
+  geom.plotBot = geom.freqTop - geom.freqGap;
+  geom.plotH = geom.plotBot - geom.plotTop;
+  geom.xIn = 10; geom.yPad = 10;
+  resizeCanvas(geom.W, geom.H);
+}
+
+function sx(i) {
+  const x0 = geom.left + geom.xIn;
+  const x1 = geom.W - geom.right - geom.xIn;
+  return x0 + (i / (N - 1)) * (x1 - x0);
+}
+
+function sy(v) {
+  const y0 = geom.plotTop + geom.yPad;
+  const y1 = geom.plotBot - geom.yPad;
+  const c = (y0 + y1) / 2;
+  return c - (v / vMax) * ((y1 - y0) / 2);
+}
+
+// ------------------------------------------------------------------------
+// Static render: everything that only changes on resize, scenario change,
+// or (m,k) change. The frequency panel lives here.
+// ------------------------------------------------------------------------
+function renderStatic() {
+  pg = createGraphics(geom.W, geom.H);
+  const c = pg, g = geom;
+  c.background(0);
+  c.noStroke();
+
+  // Main plot background.
+  c.fill(10, 10, 12);
+  c.rect(g.left, g.plotTop, g.W - g.left - g.right, g.plotH);
+
+  // Midline.
+  c.stroke(255, 255, 255, 14);
+  c.strokeWeight(1);
+  c.line(g.left + g.xIn, sy(0), g.W - g.right - g.xIn, sy(0));
+
+  // Record boundaries.
+  c.stroke(255, 255, 255, 34);
+  c.line(sx(0), g.plotTop + 2, sx(0), g.plotBot - 2);
+  c.line(sx(N - 1), g.plotTop + 2, sx(N - 1), g.plotBot - 2);
+
+  // Noisy input: faint line plus a fine grain of points.
+  c.noStroke();
+  c.fill(120, 120, 132, 46);
+  for (let i = 0; i < N; i++) c.rect(sx(i) - 0.6, sy(signal[i]) - 0.6, 1.2, 1.2);
+  c.stroke(110, 110, 122, 90);
+  c.strokeWeight(1);
+  c.noFill();
+  c.beginShape();
+  for (let i = 0; i < N; i++) c.vertex(sx(i), sy(signal[i]));
+  c.endShape();
+
+  // True signal (dashed), so the recovery is easy to judge.
+  c.stroke(255, 255, 255, 110);
+  c.strokeWeight(1);
+  for (let i = 0; i < N - 4; i += 4) {
+    c.line(sx(i), sy(truth[i]), sx(i + 2), sy(truth[i + 2]));
+  }
+
+  // ---- Frequency panel ----
+  const fTop = g.freqTop, fH = g.freqH;
+  c.noStroke();
+  c.fill(10, 10, 12);
+  c.rect(g.left, fTop, g.W - g.left - g.right, fH);
+  c.stroke(40);
+  c.noFill();
+  c.rect(g.left + 0.5, fTop + 0.5, g.W - g.left - g.right - 1, fH - 1);
+
+  const fx0 = g.left + 8;
+  const fx1 = g.W - g.right - 8;
+  const capH = 18;
+  const fy0 = fTop + capH + 4;
+  const fy1 = fTop + fH - 8;
+  const cw = (fx1 - fx0) * 0.58;          // curve occupies the left portion
+  const cx0 = fx0, cx1 = fx0 + cw;
+  const { m, k } = CONDITIONS[condIdx];
+
+  // dB grid.
+  c.stroke(30);
+  c.strokeWeight(1);
+  for (const db of [-20, -40]) {
+    const yy = fy1 - (db + 60) / 60 * (fy1 - fy0);
+    c.line(cx0, yy, cx1, yy);
+  }
+  c.noStroke();
+  c.fill(110);
+  c.textSize(9);
+  c.textAlign(RIGHT, TOP);
+  c.text('-20', cx0 - 3, fy1 - (20 / 60) * (fy1 - fy0) - 4);
+  c.text('-40', cx0 - 3, fy1 - (40 / 60) * (fy1 - fy0) - 4);
+
+  // Transfer curve.
+  c.stroke(COND_COLOR[condIdx]);
+  c.strokeWeight(1.7);
+  c.noFill();
+  c.beginShape();
+  for (let p = 0; p <= 240; p++) {
+    const f = p / 240 * 0.5;
+    const db = Math.max(transferDb(f, m, k), -60);
+    c.vertex(cx0 + (f / 0.5) * (cx1 - cx0), fy1 - (db + 60) / 60 * (fy1 - fy0));
+  }
+  c.endShape();
+
+  // Bars: how much of a few test frequencies survives the filter.
+  const barZoneX = cx1 + 24;
+  const barMax = 34;
+  const fyBase = fy1 - 2;
+  const fTest = [0.5 / m, 1 / m, 3 / m];
+  for (let q = 0; q < fTest.length; q++) {
+    const ft = fTest[q];
+    const B = transferLin(ft, m, k);
+    const xf = barZoneX + q * 74;
+    c.stroke(255, 255, 255, 40);
+    c.line(xf - 26, fyBase, xf + 26, fyBase);
+    c.noStroke();
+    c.fill(255, 255, 255, 55);            // input (full) behind
+    c.rect(xf - 10, fyBase - barMax, 20, barMax);
+    c.fill(COND_COLOR[condIdx]);          // output (what survives)
+    c.rect(xf - 10, fyBase - B * barMax, 20, B * barMax);
+    c.fill(160);
+    c.textAlign(CENTER, TOP);
+    c.text('f=' + ft.toFixed(3), xf, fyBase + 4);
+  }
+  c.fill(130);
+  c.textAlign(LEFT, BOTTOM);
+  c.text('input  ->  surviving', barZoneX - 8, fyBase - barMax - 4);
+  c.text('dashed white: true signal', cx0 + 2, fy0 - 2);
+
+  c.textAlign(LEFT, TOP);
+  c.fill(90);
+  c.text('frequency response |B(w)|^k  (0 dB = passes fully)', cx0, fTop + 3);
+  c.fill(90);
+  c.text('bars: how much of each frequency survives', barZoneX, fTop + 3);
+}
+
+// ------------------------------------------------------------------------
+// Scenario / condition / strategy progression
+// ------------------------------------------------------------------------
+function loadScenario() {
+  const s = makeSignal(scenKind);
+  truth = s.truth;
+  signal = s.signal;
+  scenLabel = s.label;
+  vMax = 1;
+  for (const v of truth) vMax = Math.max(vMax, Math.abs(v));
+  for (const v of signal) vMax = Math.max(vMax, Math.abs(v));
+  vMax *= 1.08;
+  results = CONDITIONS.map((c) =>
+    STRATEGIES.map((str) => {
+      const y = kzFilter(signal, c.m, c.k, str.id);
+      return { y, offset: str.id === 'valid' ? c.k * (c.m - 1) / 2 : 0 };
+    })
+  );
+  kernels = CONDITIONS.map(c => kernelWeights(c.m, c.k));
+}
+
+function advanceStrategy() {
+  stratIdx = (stratIdx + 1) % STRATEGIES.length;
+  sweepT0 = millis();
+}
+
+function advanceCondition() {
+  condIdx = (condIdx + 1) % CONDITIONS.length;
+  sweepT0 = millis();
+  renderStatic();
+}
+
+function advanceScenario() {
+  scenKind = (scenKind + 1) % SCENARIOS.length;
+  loadScenario();
+  renderStatic();
+}
+
+function setup() {
+  pixelDensity(Math.min(window.devicePixelRatio || 1, 2));
+  createCanvas(1, 1);
+  nextStratAt = millis() + STRATEGY_MS;
+  nextScenarioAt = millis() + SCENARIO_MS;
+  sweepT0 = millis();
+  loadScenario();
+  computeGeom();
+  renderStatic();
+}
+
+function windowResized() {
+  computeGeom();
+  renderStatic();
+}
+
+function mousePressed() {
+  advanceStrategy();
+}
+function keyPressed() {
+  if (key === ' ') advanceCondition();
+}
+
+// ------------------------------------------------------------------------
+// Frame loop — the animated layer.
+// ------------------------------------------------------------------------
+function draw() {
+  const g = geom;
+  image(pg, 0, 0);
+
+  if (millis() > nextStratAt) { nextStratAt = millis() + STRATEGY_MS; advanceStrategy(); }
+  if (millis() > nextScenarioAt) { nextScenarioAt = millis() + SCENARIO_MS; advanceScenario(); }
+
+  const { m, k } = CONDITIONS[condIdx];
+  const strat = STRATEGIES[stratIdx];
+  const res = results[condIdx][stratIdx];
+  const yArr = res.y, off = res.offset;
+  const hw = k * (m - 1) / 2;               // total window half-support
+
+  // Sweeping cursor position (sample index).
+  const sw = (millis() - sweepT0) / SWEEP_MS;
+  const ci = Math.floor((sw - Math.floor(sw)) * (N - 1));
+
+  // ---- Window support band + ghost padding at the record edges. ----
+  if (strat.id !== 'valid') {
+    noStroke();
+    fill(255, 255, 255, 9);
+    rect(sx(Math.max(0, ci - hw)), g.plotTop + 1,
+         sx(Math.min(N - 1, ci + hw)) - sx(Math.max(0, ci - hw)), g.plotH - 2);
+    // Ghost: the padded continuation beyond the record, in the strategy
+    // color, drawn only where the window actually reaches over the edge.
+    const sc = rgb(STRAT_COLOR[strat.id]);
+    if (ci - hw < 0) {
+      fill(sc[0], sc[1], sc[2], 18);
+      rect(sx(ci - hw), g.plotTop + 1, sx(0) - sx(ci - hw), g.plotH - 2);
+      stroke(sc[0], sc[1], sc[2], 90);
+      strokeWeight(1.2);
+      noFill();
+      beginShape();
+      for (let idx = ci - hw; idx <= 0; idx++) {
+        vertex(sx(idx), sy(padValueAt(signal, idx, strat.id)));
+      }
+      endShape();
+    }
+    if (ci + hw > N - 1) {
+      fill(sc[0], sc[1], sc[2], 18);
+      rect(sx(N - 1), g.plotTop + 1, sx(ci + hw) - sx(N - 1), g.plotH - 2);
+      stroke(sc[0], sc[1], sc[2], 90);
+      strokeWeight(1.2);
+      noFill();
+      beginShape();
+      for (let idx = N - 1; idx <= ci + hw; idx++) {
+        vertex(sx(idx), sy(padValueAt(signal, idx, strat.id)));
+      }
+      endShape();
+    }
+  }
+
+  // ---- Progressive output trail: the smoothed line painted by the sweep.
+  // For 'valid' the trail exists only while the window is fully inside the
+  // record — it visibly stops short of the edges.
+  let outIdx = -1;
+  if (strat.id === 'valid') {
+    if (ci >= off && ci <= N - 1 - off) outIdx = ci - off;
+  } else {
+    outIdx = ci;
+  }
+
+  if (outIdx >= 0 && outIdx < yArr.length) {
+    const hue = (stratIdx * 0.17 + millis() * 0.000016) % 1;
+    const col = hsv2rgb(hue, 0.82, 1);
+    // Glow passes, then the bright core.
+    for (const [w, a] of [[6, 26], [3, 70], [1.6, 255]]) {
+      stroke(col[0], col[1], col[2], a);
+      strokeWeight(w);
+      noFill();
+      beginShape();
+      for (let j = 0; j <= outIdx; j++) {
+        vertex(sx(off + j), sy(yArr[j]));
+      }
+      endShape();
+    }
+    // Cursor dot with halo.
+    const dx = sx(ci), dy = sy(yArr[outIdx]);
+    noStroke();
+    fill(255, 255, 255, 40);
+    ellipse(dx, dy, 14, 14);
+    fill(255);
+    ellipse(dx, dy, 5, 5);
+  }
+
+  // ---- Readable labels. ----
+  textFont('Helvetica, Arial, sans-serif');
+  textSize(17);
+  textAlign(LEFT, TOP);
+  noStroke();
+  fill(230);
+  text('Kolmogorov-Zurbenko filter  ·  window m=' + m + '  ·  passes k=' + k
+     + '  ·  edge: ', 12, g.titleTop);
+  fill(STRAT_COLOR[strat.id]);
+  const lw = textWidth('Kolmogorov-Zurbenko filter  ·  window m=' + m + '  ·  passes k=' + k + '  ·  edge: ');
+  text(strat.label, 12 + lw, g.titleTop);
+
+  textSize(12);
+  fill(170);
+  text(strat.caption, 12, g.titleTop + 24);
+
+  textSize(11);
+  fill(120);
+  text('scenario: ' + scenLabel
+     + '   ·   error vs true: ' + rmse(res.y, res.offset).toFixed(2)
+     + '   ·   support: ' + (k * (m - 1) + 1) + ' samples', 12, g.titleTop + 42);
+
+  textSize(10);
+  fill(80);
+  textAlign(RIGHT, TOP);
+  text('click: next edge strategy   ·   space: next (m,k)', g.W - 12, g.titleTop);
+}
+
+function windowResized2() {}
+</script>
+</body>
+</html>
