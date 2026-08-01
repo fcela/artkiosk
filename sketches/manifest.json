@@ -35,5 +35,11 @@
     "title": "Kaleidoscope Fold",
     "path": "sketches/kaleidoscope-fold/index.html",
     "description": "A raymarched volume where six passes of fold-and-rotate smear space into a faceted tunnel; the seams glow where the ray grazes the distance field while a slow axis-angle rotation keeps the geometry from ever repeating."
+  },
+  {
+    "id": "spiral-mandala",
+    "title": "Spiral Mandala",
+    "path": "sketches/spiral-mandala/index.html",
+    "description": "A recursive concentric mandala: each ring of small circles nests a tighter ring inside it down to a pixel-sized core, while ADD blending builds bright seams where the rings overlap and a frame-cycled hue drifts the whole figure through the spectrum."
   }
 ]
