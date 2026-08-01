@@ -30,30 +30,32 @@
       background: #000;
       color: #fff;
       display: flex;
-      align-items: center;
+      align-items: safe center;
       justify-content: center;
+      overflow-y: auto;
       font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       z-index: 10;
     }
     .minimal-container {
       display: flex;
       flex-direction: column;
+      justify-content: center;
       width: 100%;
       max-width: 600px;
-      padding: 3rem;
+      padding: 1.5rem;
     }
     .subtitle {
-      font-size: 0.8rem;
+      font-size: 0.7rem;
       letter-spacing: 0.3em;
       color: #666;
-      margin-bottom: 3rem;
+      margin-bottom: 1.4rem;
       text-transform: uppercase;
     }
     #sketch-list {
       display: flex;
       flex-direction: column;
-      gap: 1.5rem;
-      margin-bottom: 4rem;
+      gap: 0.65rem;
+      margin-bottom: 2rem;
     }
     .sketch-option {
       position: relative;
@@ -62,9 +64,10 @@
       display: none;
     }
     .sketch-label {
-      font-size: 3rem;
+      font-size: 2.1rem;
       font-weight: 200;
       letter-spacing: -0.02em;
+      line-height: 1.05;
       color: #333;
       cursor: pointer;
       transition: color 0.4s ease, transform 0.4s ease;
@@ -85,8 +88,8 @@
       background: transparent;
       color: #fff;
       border: 1px solid #333;
-      padding: 1.2rem 3rem;
-      font-size: 0.85rem;
+      padding: 0.85rem 2.2rem;
+      font-size: 0.8rem;
       letter-spacing: 0.2em;
       text-transform: uppercase;
       cursor: pointer;
