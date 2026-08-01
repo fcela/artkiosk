@@ -29,5 +29,11 @@
     "title": "Correlation Constellation",
     "path": "sketches/correlation/index.html",
     "description": "Eighteen US ETFs placed only by how their weekly returns move together, replayed from 2007; the cloud collapses in every crisis and separates again in calm."
+  },
+  {
+    "id": "kaleidoscope-fold",
+    "title": "Kaleidoscope Fold",
+    "path": "sketches/kaleidoscope-fold/index.html",
+    "description": "A raymarched volume where six passes of fold-and-rotate smear space into a faceted tunnel; the seams glow where the ray grazes the distance field while a slow axis-angle rotation keeps the geometry from ever repeating."
   }
 ]

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kaleidoscope Fold</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+    }
+    .attribution {
+      position: fixed;
+      bottom: 0.6rem;
+      right: 0.8rem;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+      color: rgba(255, 255, 255, 0.35);
+      pointer-events: none;
+      user-select: none;
+      mix-blend-mode: difference;
+    }
+  </style>
+</head>
+<body>
+  <div class="attribution">Yohei Nishitsuji</div>
+  <script>
+    // Kaleidoscope Fold — a raymarched distance estimator. A camera marches
+    // forward into a volume where space is folded by six passes of abs-
+    // reflect (p = abs(p+p) - 1.0), each fold preceded by a slow axis-angle
+    // rotation. The distance field smears the folds into a faceted, rotating
+    // tunnel; surface emission is accumulated along the ray and broadcast
+    // to RGB, so the brightest intersections read as glowing seams against
+    // a black void. Time drives both the camera's z orbit and the fold
+    // rotation, so the structure never repeats.
+
+    const frag = `#version 300 es
+precision highp float;
+
+uniform vec2 r;
+uniform float t;
+out vec4 o;
+
+// Standard 2D rotation matrix
+mat2 rotate2D(float a) {
+    float s = sin(a), c = cos(a);
+    return mat2(c, -s, s, c);
+}
+
+// Axis-angle 3D rotation matrix
+mat3 rotate3D(float a, vec3 ax) {
+    ax = normalize(ax);
+    float s = sin(a), c = cos(a), oc = 1.0 - c;
+    return mat3(
+        oc * ax.x * ax.x + c,        oc * ax.x * ax.y - ax.z * s, oc * ax.z * ax.x + ax.y * s,
+        oc * ax.x * ax.y + ax.z * s, oc * ax.y * ax.y + c,        oc * ax.y * ax.z - ax.x * s,
+        oc * ax.z * ax.x - ax.y * s, oc * ax.y * ax.z + ax.x * s, oc * ax.z * ax.z + c
+    );
+}
+
+void main() {
+    vec2 FC = gl_FragCoord.xy;
+    float g = 0.0, e = 0.0;
+    o = vec4(0.0, 0.0, 0.0, 1.0);
+
+    for (float i = 0.0; i < 1e2; i++) {
+        vec3 p = vec3((FC - r * 0.5) / r.y * g, g - 3.0 + sin(t * 0.5));
+        p.zy *= rotate2D(t * 0.5);
+
+        for (int j = 0; j < 6; j++) {
+            // Replaced implicit integers with explicit floats
+            p *= rotate3D(t + 0.5, vec3(5.0, 2.0 * smoothstep(-8.0, 8.0, 0.0), 4.0));
+            p = abs(p + p) - 1.0;
+        }
+
+        e = (length(p.yzx) * 5.0 - 6.0) / 9e2;
+        g += e;
+        
+        // Broadcast float output to vec3 for strict type matching
+        o.rgb += vec3(exp(-e * 1e6) / 7e1);
+    }
+}`;
+
+    const vert = `#version 300 es
+uniform mat4 uModelViewMatrix;
+uniform mat4 uProjectionMatrix;
+in vec3 aPosition;
+
+void main() {
+    gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+}`;
+
+    let sh;
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight, WEBGL);
+      sh = createShader(vert, frag);
+      noStroke();
+    }
+
+    function draw() {
+      shader(sh);
+
+      // Bind shader uniforms to p5.js variables
+      sh.setUniform('r', [width, height]);
+      sh.setUniform('t', millis() / 1000.0);
+
+      // Draw surface to execute the fragment shader
+      plane(width, height);
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
+  </script>
+</body>
+</html>
