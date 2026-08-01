@@ -113,7 +113,7 @@ void main() {
       // fold rotation drifts slowly; a calmer rate hides per-frame jumps on
       // low-FPS devices and reads as more mesmerizing.
       sh.setUniform('r', [width, height]);
-      sh.setUniform('t', (millis() / 1000.0) * 0.6);
+      sh.setUniform('t', (millis() / 1000.0) * 0.05);
 
       // Draw surface to execute the fragment shader
       plane(width, height);

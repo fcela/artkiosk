@@ -117,26 +117,45 @@ void main() {
 `;
 
     let myShader;
+    // Render at this fraction of screen size and let CSS stretch the canvas
+    // to fullscreen. Each pixel costs ~800 trig calls, so this is the
+    // difference between a buttery 60fps and a choppy 8fps on a Retina
+    // display; the glow pattern upscales cleanly.
+    const RENDER_SCALE = 0.5;
+    // Slow the rotation: at full speed the moving rings strobe on low-FPS
+    // devices, which reads as choppy even when the frame rate is fine.
+    const TIME_SCALE = 0.0625;
+
+    // p5 sets an inline width/height on the canvas that overrides stylesheet
+    // rules; re-stretch the small backing store to fill the window.
+    function stretchCanvas() {
+      const c = document.querySelector('canvas');
+      if (c) {
+        c.style.width = '100vw';
+        c.style.height = '100vh';
+      }
+    }
 
     function setup() {
-      createCanvas(windowWidth, windowHeight, WEBGL);
+      pixelDensity(1);
+      createCanvas(windowWidth * RENDER_SCALE, windowHeight * RENDER_SCALE, WEBGL);
       myShader = createShader(vert, frag);
       noStroke();
+      stretchCanvas();
     }
 
     function draw() {
       shader(myShader);
-
-      // Multiply by pixelDensity() to correct offset/scaling on high-DPI screens
-      myShader.setUniform('u_resolution', [width * pixelDensity(), height * pixelDensity()]);
-      myShader.setUniform('u_time', millis() / 1000.0);
+      myShader.setUniform('u_resolution', [width, height]);
+      myShader.setUniform('u_time', millis() / 1000.0 * TIME_SCALE);
 
       // Draw using standard p5 coordinates
       rect(-width / 2, -height / 2, width, height);
     }
 
     function windowResized() {
-      resizeCanvas(windowWidth, windowHeight);
+      resizeCanvas(windowWidth * RENDER_SCALE, windowHeight * RENDER_SCALE);
+      stretchCanvas();
     }
   </script>
 </body>
