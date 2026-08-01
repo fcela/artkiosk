@@ -109,9 +109,11 @@ void main() {
     function draw() {
       shader(sh);
 
-      // Bind shader uniforms to p5.js variables
+      // Bind shader uniforms to p5.js variables. Time is scaled down so the
+      // fold rotation drifts slowly; a calmer rate hides per-frame jumps on
+      // low-FPS devices and reads as more mesmerizing.
       sh.setUniform('r', [width, height]);
-      sh.setUniform('t', millis() / 1000.0);
+      sh.setUniform('t', (millis() / 1000.0) * 0.6);
 
       // Draw surface to execute the fragment shader
       plane(width, height);
