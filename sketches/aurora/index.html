@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aurora</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+    // Aurora Ribbons — a procedural night sky. A vertical gradient fades from
+    // starlit black at the top to a dim horizon glow. Over it, several sine
+    // ribbons flow along x, each shaped by summed low-frequency noise so the
+    // sheets fold, separate, and merge. The ribbons are tinted along their
+    // length by a slow hue rotation, lighter at the lower edge (the classic
+    // green-to-magenta band). Points of starlight twinkle in the upper half on
+    // a hash grid. Per-pixel shading; fill-rate capped near 1080p so it stays
+    // crisp on dense panels.
+
+    const SHADER_BODY = `
+uniform vec2 uRes;
+uniform float uTime;
+uniform vec4 uSeed;
+
+// hash + valuenoise for the ribbon shaping. Cheap 2D value noise with smooth
+// interpolation; good enough summed a few octaves deep.
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 345.45));
+  p += dot(p, p + 34.345);
+  return fract(p.x * p.y);
+}
+float vnoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = hash21(i);
+  float b = hash21(i + vec2(1.0, 0.0));
+  float c = hash21(i + vec2(0.0, 1.0));
+  float d = hash21(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  mat2 rot = mat2(0.8, -0.6, 0.6, 0.8);
+  for (int i = 0; i < 4; i++) {
+    v += a * vnoise(p);
+    p = rot * p * 2.0;
+    a *= 0.5;
+  }
+  return v;
+}
+vec3 hsv2rgb(vec3 c) {
+  vec3 k = abs(fract(c.xxx + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0);
+  return c.z * mix(vec3(1.0), clamp(k - 1.0, 0.0, 1.0), c.y);
+}
+
+// Cell-based starfield: hash each grid cell, keep it only if the hash is
+// above a threshold (sparse stars), and twinkle on a per-star phase.
+float stars(vec2 uv, float density) {
+  vec2 g = floor(uv * vec2(220.0, 110.0));
+  float h = hash21(g + 17.0);
+  float s = 0.0;
+  if (h > 1.0 - density) {
+    vec2 f = fract(uv * vec2(220.0, 110.0)) - 0.5;
+    float d = length(f);
+    float tw = 0.5 + 0.5 * sin(uTime * (1.5 + h * 3.0) + h * 30.0);
+    s = smoothstep(0.05, 0.0, d) * tw;
+  }
+  return s;
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy * 2.0 - uRes) / min(uRes.x, uRes.y);
+  // Normalized 0..1 coordinates for gradient work.
+  vec2 n = gl_FragCoord.xy / uRes;
+  float aspect = uRes.x / uRes.y;
+
+  // Sky: dark overhead, faint warm band low on the horizon.
+  vec3 skyTop = vec3(0.015, 0.020, 0.045);
+  vec3 skyBot = vec3(0.050, 0.035, 0.060);
+  vec3 sky = mix(skyBot, skyTop, pow(1.0 - n.y, 1.6));
+
+  // Add stars only in the upper half of the sky, denser near the top.
+  float starMask = smoothstep(0.45, 0.95, n.y);
+  float starLayer1 = stars(uv * vec2(1.0, 1.0) + uSeed.xy, 0.020) * starMask;
+  float starLayer2 = stars(uv * vec2(1.3, 1.3) + uSeed.zw + 5.0, 0.012) * starMask;
+  float star = max(starLayer1, starLayer2);
+  sky += vec3(0.9, 0.95, 1.0) * star;
+
+  // Ribbons. We march several sheets along x; each sheet's vertical center
+  // is a function of x plus a slow vertical drift over time. The thickness
+  // of each sheet is modulated by an fbm so they breathe and split.
+  vec3 accum = vec3(0.0);
+  float weight = 0.0;
+
+  // The base hue rotates very slowly (one full turn in ~10 min) and the
+  // seeds shift each sheet's phase so every load is a different member of
+  // the family.
+  float baseHue = fract(uSeed.x + uTime * 0.006);
+
+  for (int i = 0; i < 4; i++) {
+    float fi = float(i);
+    // Animated x coordinate so the ribbons move sideways.
+    float xx = uv.x * 1.2 + uTime * (0.025 + fi * 0.010) + uSeed.x * 6.28;
+    // Vertical centerline shaped by fbm of (xx, time). Each ribbon gets its
+    // own offset and a slow vertical breathing cycle.
+    float cy = 0.55 - 0.10 * fi
+             + fbm(vec2(xx * 0.55, uTime * 0.04 + fi * 3.1)) * 1.6 - 0.8
+             + 0.20 * sin(uTime * 0.07 + fi * 1.7 + uSeed.y * 6.28);
+    // Thickness: another fbm so the sheets thin and fan out.
+    float thick = 0.10 + 0.45 * fbm(vec2(xx * 0.35 + fi * 11.0, uTime * 0.03));
+    float d = abs(uv.y - cy);
+    // Soft gaussian-ish profile; ribbons fade gently at the edges.
+    float profile = exp(-(d * d) / (thick * thick * 0.6));
+
+    // Hue varies along the length of the ribbon and a bit across its
+    // thickness, with a global slow rotation. The lower edge reads greener,
+    // the upper edge shifts toward magenta/pink — the classic two-tone.
+    float lenHue = fract(baseHue + fi * 0.12 + xx * 0.04);
+    float edgeHue = mix(lenHue + 0.45, lenHue, smoothstep(0.0, thick, d));
+    float sat = 0.55 + 0.20 * fbm(vec2(xx * 0.2, fi * 4.0));
+    float val = 0.85;
+    vec3 ribbon = hsv2rgb(vec3(edgeHue, sat, val));
+
+    // Vertical brightness: brighter near the ribbon's upper reach, dim near
+    // the very top of the sky so the ribbons sit against the dark band.
+    float vfade = smoothstep(0.95, 0.55, n.y) * smoothstep(0.05, 0.30, n.y);
+    accum += ribbon * profile * vfade * (0.85 - fi * 0.12);
+    weight += profile;
+  }
+
+  // A faint additive glow near the bottom where ribbons meet the horizon —
+  // a soft wash tinted by the ribbon hue, suggesting ground scatter.
+  float horizonGlow = smoothstep(0.25, 0.0, n.y)
+                    * (0.30 + 0.20 * fbm(vec2(uv.x * 0.6 + uTime * 0.02, 0.0)));
+  accum += hsv2rgb(vec3(baseHue + 0.5, 0.4, 0.7)) * horizonGlow * 0.35;
+
+  // Composite: sky underneath, ribbons added on top (additive), then a mild
+  // vignette to focus the eye toward the middle of the sky.
+  vec3 col = sky + accum * 0.55;
+  float vig = 1.0 - 0.35 * dot(n - 0.5, n - 0.5) * 1.4;
+  col *= vig;
+
+  // Soft tonemap to keep ribbons from clipping to pure white.
+  col = col / (1.0 + col * 0.8);
+
+  fragColor = vec4(col, 1.0);
+}
+`;
+
+    const canvas = document.getElementById('c');
+    const opts = { antialias: false, alpha: false, depth: false, stencil: false };
+    const gl2 = canvas.getContext('webgl2', opts);
+    const gl = gl2 || canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts);
+
+    let vertSrc, fragSrc;
+    if (gl2) {
+      vertSrc = '#version 300 es\nin vec2 aPos;\nvoid main(){ gl_Position = vec4(aPos, 0.0, 1.0); }';
+      fragSrc = '#version 300 es\nprecision highp float;\nout vec4 fragColor;\n' + SHADER_BODY;
+    } else if (gl) {
+      vertSrc = 'attribute vec2 aPos;\nvoid main(){ gl_Position = vec4(aPos, 0.0, 1.0); }';
+      fragSrc = 'precision highp float;\n#define fragColor gl_FragColor\n' + SHADER_BODY;
+    }
+
+    function compile(type, src) {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(sh));
+      }
+      return sh;
+    }
+
+    if (gl) {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, vertSrc));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fragSrc));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(prog));
+      }
+      gl.useProgram(prog);
+
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, 'aPos');
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+      const uRes = gl.getUniformLocation(prog, 'uRes');
+      const uTime = gl.getUniformLocation(prog, 'uTime');
+      gl.uniform4f(gl.getUniformLocation(prog, 'uSeed'),
+        Math.random(), Math.random(), Math.random(), Math.random());
+      const t0 = Math.random() * 200.0;
+
+      const MAX_PIXELS = 2.4e6;
+      function resize() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        let w = Math.max(1, Math.round(window.innerWidth * dpr));
+        let h = Math.max(1, Math.round(window.innerHeight * dpr));
+        const scale = Math.sqrt(MAX_PIXELS / (w * h));
+        if (scale < 1) {
+          w = Math.max(1, Math.round(w * scale));
+          h = Math.max(1, Math.round(h * scale));
+        }
+        canvas.width = w;
+        canvas.height = h;
+        gl.viewport(0, 0, w, h);
+        gl.uniform2f(uRes, w, h);
+      }
+      window.addEventListener('resize', resize);
+      resize();
+
+      const start = performance.now();
+      (function frame(now) {
+        gl.uniform1f(uTime, t0 + (now - start) / 1000);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        requestAnimationFrame(frame);
+      })(start);
+    }
+  </script>
+</body>
+</html>

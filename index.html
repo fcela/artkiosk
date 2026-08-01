@@ -74,6 +74,20 @@
       display: block;
       user-select: none;
     }
+    .sketch-title {
+      display: block;
+    }
+    .sketch-desc {
+      display: block;
+      margin-top: 0.4rem;
+      max-width: 52ch;
+      font-size: 0.62rem;
+      font-weight: 400;
+      letter-spacing: 0.01em;
+      line-height: 1.5;
+      color: #3d3d3d;
+      transition: color 0.4s ease;
+    }
     .sketch-checkbox:checked + .sketch-label {
       color: #fff;
     }
@@ -83,6 +97,15 @@
     .sketch-checkbox:checked + .sketch-label:hover {
       color: #fff;
       transform: translateX(15px);
+    }
+    .sketch-label:hover .sketch-desc {
+      color: #6a6a6a;
+    }
+    .sketch-checkbox:checked + .sketch-label .sketch-desc {
+      color: #5a5a5a;
+    }
+    .sketch-checkbox:checked + .sketch-label:hover .sketch-desc {
+      color: #8a8a8a;
     }
     #start-btn {
       background: transparent;
@@ -268,7 +291,17 @@
         const label = document.createElement('label');
         label.htmlFor = cb.id;
         label.className = 'sketch-label';
-        label.textContent = sketch.title;
+        
+        const title = document.createElement('span');
+        title.className = 'sketch-title';
+        title.textContent = sketch.title;
+        
+        const desc = document.createElement('span');
+        desc.className = 'sketch-desc';
+        desc.textContent = sketch.description;
+        
+        label.appendChild(title);
+        label.appendChild(desc);
         
         option.appendChild(cb);
         option.appendChild(label);

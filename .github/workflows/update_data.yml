@@ -1,0 +1,45 @@
+name: Update Repo Tectonics data
+
+# Refreshes the OFR repo-rate snapshot behind the "Repo Market Tectonics"
+# sketch. OFR publishes one observation per business day, so we run once a
+# day, shortly after midnight UTC. The sketch reads a committed JSON file
+# rather than calling the API from the browser, because the kiosk is a
+# static site on GitHub Pages.
+on:
+  schedule:
+    - cron: '0 0 * * *'   # daily at 00:00 UTC
+  workflow_dispatch:       # manual trigger for backfills, on demand
+
+permissions:
+  contents: write         # required for git-auto-commit-action to push
+
+concurrency:
+  group: update-repo-tectonics
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir requests pandas
+
+      - name: Fetch OFR STFM data
+        run: python scripts/fetch_ofr.py
+
+      # The fetcher writes two copies: data/repo_tectonics.json (the file
+      # the spec names) and the kiosk-relative copy the sketch loads over
+      # HTTP, sketches/repo-tectonics/data/repo_tectonics.json. Committing
+      # both keeps the static site and the spec artifact in sync.
+      - name: Commit any changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Refresh OFR repo-rate data for the tectonics sketch"
+          file_pattern: "data/repo_tectonics.json sketches/repo-tectonics/data/repo_tectonics.json"

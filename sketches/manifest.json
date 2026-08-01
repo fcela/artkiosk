@@ -40,7 +40,7 @@
     "id": "spiral-mandala",
     "title": "Spiral Mandala",
     "path": "sketches/spiral-mandala/index.html",
-    "description": "A recursive concentric mandala: each ring of small circles nests a tighter ring inside it down to a pixel-sized core, while ADD blending builds bright seams where the rings overlap and a frame-cycled hue drifts the whole figure through the spectrum."
+    "description": "A raymarched logarithmic spiral: each ray step warps space into log-polar coordinates so concentric rings collapse onto themselves as the ray marches in, with hue tied to ring count and a sweeping time term that rotates the whole mandala through the spectrum without repeating."
   },
   {
     "id": "kolmogorov-zurbenko",
