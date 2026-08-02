@@ -43,9 +43,9 @@
     "description": "A raymarched logarithmic spiral: each ray step warps space into log-polar coordinates so concentric rings collapse onto themselves as the ray marches in, with hue tied to ring count and a sweeping time term that rotates the whole mandala through the spectrum without repeating."
   },
   {
-    "id": "kolmogorov-zurbenko",
-    "title": "Kolmogorov-Zurbenko Filter",
+    "id": "filtered-momentum",
+    "title": "Filtered Momentum",
     "path": "sketches/kolmogorov-zurbenko/index.html",
-    "description": "K iterations of a centered moving average of length M (the Kolmogorov-Zurbenko low-pass). The same noisy signal is shown through three (M,k) settings and four edge strategies - dropping the edges, or preserving them by extrapolation, reflection, or replication - with each filter's frequency response and effective Gaussian-limit window below. Four noisy scenarios rotate; three weekly-revenue segments switch into forecast mode, where the series is differenced into six views (level, week-over-week, month-over-month, same-week-last-year, its month-over-month variant, and a three-band trend/seasonal/irregular decomposition) before filtering, and the extrapolated trend plus recovered seasonality is scored out-of-sample against two naive baselines."
+    "description": "A revenue stream of a diversified financial-services firm, five years of weekly history plus a sixth year being lived through. The trend is pulled out by repeated centered moving averages (the Kolmogorov-Zurbenko low-pass), extrapolated at the record edge, re-anchored to the recent seasonally-adjusted level, and stitched back together with the recovered seasonal pattern to project the year-to-date total forward; a run-rate built from the historical share of annual revenue realized by each week and a naive last-year scaling race it to the realized annual total, with a live error table scoring each method. Filter settings, edge strategies, and synthetic segments - steady, accelerating, decelerating, or shocked years - rotate."
   }
 ]
