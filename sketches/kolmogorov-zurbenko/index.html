@@ -944,7 +944,7 @@ function renderFrame() {
     rect(lx, ly + 2, 10, 10);
     noStroke();
     fill(175);
-    const label = 'future actual';
+    const label = 'future actual  ' + fmt(fc.total[5]);
     text(label, lx + 16, ly);
     lx += 16 + textWidth(label) + 28;
   }
